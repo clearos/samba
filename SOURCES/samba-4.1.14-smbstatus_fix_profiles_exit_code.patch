@@ -1,0 +1,43 @@
+From a01d4b38b1095c498fd0dedbbfe09ce42d6207e3 Mon Sep 17 00:00:00 2001
+From: Andreas Schneider <asn@samba.org>
+Date: Mon, 24 Nov 2014 17:46:27 +0100
+Subject: [PATCH 2/2] s3-smbstatus: Fix exit code of profile output.
+
+BUG: https://bugzilla.samba.org/show_bug.cgi?id=10961
+
+Signed-off-by: Andreas Schneider <asn@samba.org>
+Reviewed-by: Jeremy Allison <jra@samba.org>
+---
+ source3/utils/status.c | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/source3/utils/status.c b/source3/utils/status.c
+index 9cb4d8b..2c21ee4 100644
+--- a/source3/utils/status.c
++++ b/source3/utils/status.c
+@@ -365,6 +365,7 @@ int main(int argc, const char *argv[])
+ 	TALLOC_CTX *frame = talloc_stackframe();
+ 	int ret = 0;
+ 	struct messaging_context *msg_ctx;
++	bool ok;
+ 
+ 	sec_init();
+ 	load_case_tables();
+@@ -464,10 +465,12 @@ int main(int argc, const char *argv[])
+ 	switch (profile_only) {
+ 		case 'P':
+ 			/* Dump profile data */
+-			return status_profile_dump(verbose);
++			ok = status_profile_dump(verbose);
++			return ok ? 0 : 1;
+ 		case 'R':
+ 			/* Continuously display rate-converted data */
+-			return status_profile_rates(verbose);
++			ok = status_profile_rates(verbose);
++			return ok ? 0 : 1;
+ 		default:
+ 			break;
+ 	}
+-- 
+2.1.2
+

@@ -1,0 +1,268 @@
+From 051a27256323da350eb8a64007231e72cbc53d0b Mon Sep 17 00:00:00 2001
+From: Jeremy Allison <jra@samba.org>
+Date: Tue, 13 Jan 2015 13:35:56 -0800
+Subject: [PATCH 1/5] s3: auth: Add a utility function - SamInfo3_handle_sids()
+ that factors out the code to handle "Unix Users" and "Unix Groups".
+
+Based on code from Michael Zeis <mzeis.quantum@gmail.com>
+
+https://bugzilla.samba.org/show_bug.cgi?id=11044
+
+Signed-off-by: Jeremy Allison <jra@samba.org>
+Reviewed-by: Volker Lendecke <vl@samba.org>
+(cherry picked from commit 9395243890aff5bb2166e18e33492afb28850097)
+---
+ source3/auth/server_info.c | 70 ++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 70 insertions(+)
+
+Index: samba-4.1.12/source3/auth/server_info.c
+===================================================================
+--- samba-4.1.12.orig/source3/auth/server_info.c
++++ samba-4.1.12/source3/auth/server_info.c
+@@ -330,6 +330,76 @@ NTSTATUS create_info3_from_pac_logon_inf
+ 	return NT_STATUS_OK;
+ }
+ 
++/*
++ * Check if this is a "Unix Users" domain user, or a
++ * "Unix Groups" domain group, we need to handle it
++ * in a special way if that's the case.
++ */
++
++static NTSTATUS SamInfo3_handle_sids(const char *username,
++			const struct dom_sid *user_sid,
++			const struct dom_sid *group_sid,
++			struct netr_SamInfo3 *info3,
++			struct dom_sid *domain_sid,
++			struct extra_auth_info *extra)
++{
++	if (sid_check_is_in_unix_users(user_sid)) {
++		/* in info3 you can only set rids for the user and the
++		 * primary group, and the domain sid must be that of
++		 * the sam domain.
++		 *
++		 * Store a completely bogus value here.
++		 * The real SID is stored in the extra sids.
++		 * Other code will know to look there if (-1) is found
++		 */
++		info3->base.rid = (uint32_t)(-1);
++		sid_copy(&extra->user_sid, user_sid);
++
++		DEBUG(10, ("Unix User found. Rid marked as "
++			"special and sid (%s) saved as extra sid\n",
++			sid_string_dbg(user_sid)));
++	} else {
++		sid_copy(domain_sid, user_sid);
++		sid_split_rid(domain_sid, &info3->base.rid);
++	}
++
++	if (is_null_sid(domain_sid)) {
++		sid_copy(domain_sid, get_global_sam_sid());
++	}
++
++	/* check if this is a "Unix Groups" domain group,
++	 * if so we need special handling */
++	if (sid_check_is_in_unix_groups(group_sid)) {
++		/* in info3 you can only set rids for the user and the
++		 * primary group, and the domain sid must be that of
++		 * the sam domain.
++		 *
++		 * Store a completely bogus value here.
++		 * The real SID is stored in the extra sids.
++		 * Other code will know to look there if (-1) is found
++		 */
++		info3->base.primary_gid = (uint32_t)(-1);
++		sid_copy(&extra->pgid_sid, group_sid);
++
++		DEBUG(10, ("Unix Group found. Rid marked as "
++			"special and sid (%s) saved as extra sid\n",
++			sid_string_dbg(group_sid)));
++	} else {
++		bool ok = sid_peek_check_rid(domain_sid, group_sid,
++					&info3->base.primary_gid);
++		if (!ok) {
++			DEBUG(1, ("The primary group domain sid(%s) does not "
++				"match the domain sid(%s) for %s(%s)\n",
++				sid_string_dbg(group_sid),
++				sid_string_dbg(domain_sid),
++				username,
++				sid_string_dbg(user_sid)));
++			return NT_STATUS_INVALID_SID;
++		}
++	}
++	return NT_STATUS_OK;
++}
++
+ #define RET_NOMEM(ptr) do { \
+ 	if (!ptr) { \
+ 		TALLOC_FREE(info3); \
+@@ -351,7 +421,6 @@ NTSTATUS samu_to_SamInfo3(TALLOC_CTX *me
+ 	const char *tmp;
+ 	gid_t *gids;
+ 	NTSTATUS status;
+-	bool ok;
+ 
+ 	user_sid = pdb_get_user_sid(samu);
+ 	group_sid = pdb_get_group_sid(samu);
+@@ -368,63 +437,16 @@ NTSTATUS samu_to_SamInfo3(TALLOC_CTX *me
+ 
+ 	ZERO_STRUCT(domain_sid);
+ 
+-	/* check if this is a "Unix Users" domain user,
+-	 * we need to handle it in a special way if that's the case */
+-	if (sid_check_is_in_unix_users(user_sid)) {
+-		/* in info3 you can only set rids for the user and the
+-		 * primary group, and the domain sid must be that of
+-		 * the sam domain.
+-		 *
+-		 * Store a completely bogus value here.
+-		 * The real SID is stored in the extra sids.
+-		 * Other code will know to look there if (-1) is found
+-		 */
+-		info3->base.rid = (uint32_t)(-1);
+-		sid_copy(&extra->user_sid, user_sid);
+-
+-		DEBUG(10, ("Unix User found in struct samu. Rid marked as "
+-			   "special and sid (%s) saved as extra sid\n",
+-			   sid_string_dbg(user_sid)));
+-	} else {
+-		sid_copy(&domain_sid, user_sid);
+-		sid_split_rid(&domain_sid, &info3->base.rid);
+-	}
++	status = SamInfo3_handle_sids(pdb_get_username(samu),
++				user_sid,
++				group_sid,
++				info3,
++				&domain_sid,
++				extra);
+ 
+-	if (is_null_sid(&domain_sid)) {
+-		sid_copy(&domain_sid, get_global_sam_sid());
+-	}
+-
+-	/* check if this is a "Unix Groups" domain group,
+-	 * if so we need special handling */
+-	if (sid_check_is_in_unix_groups(group_sid)) {
+-		/* in info3 you can only set rids for the user and the
+-		 * primary group, and the domain sid must be that of
+-		 * the sam domain.
+-		 *
+-		 * Store a completely bogus value here.
+-		 * The real SID is stored in the extra sids.
+-		 * Other code will know to look there if (-1) is found
+-		 */
+-		info3->base.primary_gid = (uint32_t)(-1);
+-		sid_copy(&extra->pgid_sid, group_sid);
+-
+-		DEBUG(10, ("Unix Group found in struct samu. Rid marked as "
+-			   "special and sid (%s) saved as extra sid\n",
+-			   sid_string_dbg(group_sid)));
+-
+-	} else {
+-		ok = sid_peek_check_rid(&domain_sid, group_sid,
+-					&info3->base.primary_gid);
+-		if (!ok) {
+-			DEBUG(1, ("The primary group domain sid(%s) does not "
+-				  "match the domain sid(%s) for %s(%s)\n",
+-				  sid_string_dbg(group_sid),
+-				  sid_string_dbg(&domain_sid),
+-				  pdb_get_username(samu),
+-				  sid_string_dbg(user_sid)));
+-			TALLOC_FREE(info3);
+-			return NT_STATUS_UNSUCCESSFUL;
+-		}
++	if (!NT_STATUS_IS_OK(status)) {
++		TALLOC_FREE(info3);
++		return status;
+ 	}
+ 
+ 	unix_to_nt_time(&info3->base.logon_time, pdb_get_logon_time(samu));
+@@ -517,7 +539,8 @@ NTSTATUS samu_to_SamInfo3(TALLOC_CTX *me
+ NTSTATUS passwd_to_SamInfo3(TALLOC_CTX *mem_ctx,
+ 			    const char *unix_username,
+ 			    const struct passwd *pwd,
+-			    struct netr_SamInfo3 **pinfo3)
++			    struct netr_SamInfo3 **pinfo3,
++			    struct extra_auth_info *extra)
+ {
+ 	struct netr_SamInfo3 *info3;
+ 	NTSTATUS status;
+@@ -612,9 +635,22 @@ NTSTATUS passwd_to_SamInfo3(TALLOC_CTX *
+ 
+ 	ZERO_STRUCT(domain_sid);
+ 
+-	sid_copy(&domain_sid, &user_sid);
+-	sid_split_rid(&domain_sid, &info3->base.rid);
++	status = SamInfo3_handle_sids(unix_username,
++				&user_sid,
++				&group_sid,
++				info3,
++				&domain_sid,
++				extra);
++
++	if (!NT_STATUS_IS_OK(status)) {
++		goto done;
++	}
++
+ 	info3->base.domain_sid = dom_sid_dup(info3, &domain_sid);
++	if (info3->base.domain_sid == NULL) {
++		status = NT_STATUS_NO_MEMORY;
++		goto done;
++	}
+ 
+ 	ok = sid_peek_check_rid(&domain_sid, &group_sid,
+ 				&info3->base.primary_gid);
+Index: samba-4.1.12/source3/auth/auth_util.c
+===================================================================
+--- samba-4.1.12.orig/source3/auth/auth_util.c
++++ samba-4.1.12/source3/auth/auth_util.c
+@@ -662,7 +662,8 @@ NTSTATUS make_server_info_pw(TALLOC_CTX
+ 	status = passwd_to_SamInfo3(result,
+ 				    unix_username,
+ 				    pwd,
+-				    &result->info3);
++				    &result->info3,
++				    &result->extra);
+ 	if (!NT_STATUS_IS_OK(status)) {
+ 		goto done;
+ 	}
+Index: samba-4.1.12/source3/auth/proto.h
+===================================================================
+--- samba-4.1.12.orig/source3/auth/proto.h
++++ samba-4.1.12/source3/auth/proto.h
+@@ -298,7 +298,8 @@ NTSTATUS samu_to_SamInfo3(TALLOC_CTX *me
+ NTSTATUS passwd_to_SamInfo3(TALLOC_CTX *mem_ctx,
+ 			    const char *unix_username,
+ 			    const struct passwd *pwd,
+-			    struct netr_SamInfo3 **pinfo3);
++			    struct netr_SamInfo3 **pinfo3,
++			    struct extra_auth_info *extra);
+ struct netr_SamInfo3 *copy_netr_SamInfo3(TALLOC_CTX *mem_ctx,
+ 					 const struct netr_SamInfo3 *orig);
+ struct netr_SamInfo3 *wbcAuthUserInfo_to_netr_SamInfo3(TALLOC_CTX *mem_ctx,
+Index: samba-4.1.12/selftest/target/Samba3.pm
+===================================================================
+--- samba-4.1.12.orig/selftest/target/Samba3.pm
++++ samba-4.1.12/selftest/target/Samba3.pm
+@@ -1045,6 +1045,10 @@ sub provision($$$$$$)
+ 	path = $shrdir
+         force user = $unix_name
+         guest ok = yes
++[forceuser_unixonly]
++	path = $shrdir
++	force user = pdbtest
++	guest ok = yes
+ [forcegroup]
+ 	path = $shrdir
+         force group = nogroup
+Index: samba-4.1.12/source3/script/tests/test_smbclient_auth.sh
+===================================================================
+--- samba-4.1.12.orig/source3/script/tests/test_smbclient_auth.sh
++++ samba-4.1.12/source3/script/tests/test_smbclient_auth.sh
+@@ -27,5 +27,6 @@ testit "smbclient //$SERVER/tmpguest" $S
+ testit "smbclient //$SERVER/tmpguest as anon" $SMBCLIENT //$SERVER/tmpguest $CONFIGURATION -U% -I $SERVER_IP -p 139 -c quit $ADDARGS
+ testit "smbclient //$SERVER/forceuser" $SMBCLIENT //$SERVER/forceuser $CONFIGURATION -U$USERNAME%$PASSWORD -I $SERVER_IP -p 139 -c quit $ADDARGS
+ testit "smbclient //$SERVER/forceuser as anon" $SMBCLIENT //$SERVER/forceuser $CONFIGURATION -U% -I $SERVER_IP -p 139 -c quit $ADDARGS
++testit "smbclient //$SERVER/forceuser_unixonly" $SMBCLIENT //$SERVER/forceuser_unixonly $CONFIGURATION -U$USERNAME%$PASSWORD -I $SERVER_IP -p 139 -c quit $ADDARGS
+ testit "smbclient //$SERVER/forcegroup" $SMBCLIENT //$SERVER/forcegroup $CONFIGURATION -U$USERNAME%$PASSWORD -I $SERVER_IP -p 139 -c quit $ADDARGS
+ testit "smbclient //$SERVER/forcegroup as anon" $SMBCLIENT //$SERVER/forcegroup $CONFIGURATION -U% -I $SERVER_IP -p 139 -c quit $ADDARGS

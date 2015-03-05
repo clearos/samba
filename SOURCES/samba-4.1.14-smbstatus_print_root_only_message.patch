@@ -1,0 +1,40 @@
+From 6f12155432a5769e69b4b8794e332c2d0e48a9de Mon Sep 17 00:00:00 2001
+From: Andreas Schneider <asn@samba.org>
+Date: Tue, 16 Dec 2014 15:52:43 +0100
+Subject: [PATCH] smbstatus: Tell the user that smbstatus can only be run as
+ root.
+
+In the meantime smbstatus tries to collection information from tdb's
+which are only accessible by root as they contain sensitive information
+like session keys and other secrets. This means smbstatus can no longer
+be executed as a user.
+
+BUG: https://bugzilla.samba.org/show_bug.cgi?id=11012
+
+Signed-off-by: Andreas Schneider <asn@samba.org>
+Reviewed-by: Volker Lendecke <vl@samba.org>
+(cherry picked from commit c079ae65f45e6c19b9549084b09b83ae9118a276)
+---
+ source3/utils/status.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/source3/utils/status.c b/source3/utils/status.c
+index 9ce92aa..18f2749 100644
+--- a/source3/utils/status.c
++++ b/source3/utils/status.c
+@@ -376,6 +376,12 @@ static void print_notify_recs(const char *path,
+ 		goto done;
+ 	}
+ 
++	if (getuid() != 0) {
++		d_printf("smbstatus only works as root!\n");
++		ret = 1;
++		goto done;
++	}
++
+ 	pc = poptGetContext(NULL, argc, (const char **) argv, long_options, 
+ 			    POPT_CONTEXT_KEEP_FIRST);
+ 
+-- 
+2.2.0
+

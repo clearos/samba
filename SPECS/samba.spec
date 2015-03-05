@@ -1,14 +1,19 @@
-# Set --with testsuite or %bcond_without to run the Samba torture testsuite.
+# rpmbuild --rebuild --with testsuite --without clustering samba.src.rpm
+#
+# The testsuite is disabled by default. Set --with testsuite or %bcond_without
+# to run the Samba torture testsuite.
 %bcond_with testsuite
+# ctdb is enabled by default, you can disable it with: --without clustering
+%bcond_without clustering
 
-%define main_release 38
+%define main_release 21
 
-%define samba_version 4.1.1
-%define talloc_version 2.0.8
+%define samba_version 4.1.12
+%define talloc_version 2.1.1
 %define ntdb_version 0.9
-%define tdb_version 1.2.12
-%define tevent_version 0.9.18
-%define ldb_version 1.1.16
+%define tdb_version 1.3.0
+%define tevent_version 0.9.21
+%define ldb_version 1.1.17
 # This should be rc1 or nil
 %define pre_release %nil
 
@@ -21,7 +26,7 @@
 %global with_libsmbclient 1
 %global with_libwbclient 1
 
-%global with_pam_smbpass 0
+%global with_pam_smbpass 1
 %global with_internal_talloc 0
 %global with_internal_tevent 0
 %global with_internal_tdb 0
@@ -38,6 +43,11 @@
 %endif
 %endif
 
+%global libwbc_alternatives_suffix %nil
+%if %{__isa_bits} == 64
+%global libwbc_alternatives_suffix -64
+%endif
+
 %global with_mitkrb5 1
 %global with_dc 0
 
@@ -47,7 +57,11 @@
 %global with_dc 1
 %endif
 
+%global with_clustering_support 0
+
+%if %{with clustering}
 %global with_clustering_support 1
+%endif
 
 %{!?python_libdir: %define python_libdir %(%{__python} -c "from distutils.sysconfig import get_python_lib; print get_python_lib(1,1)")}
 %{!?python_sitearch: %define python_sitearch %(%{__python} -c "from distutils.sysconfig import get_python_lib; print get_python_lib(1)")}
@@ -85,42 +99,34 @@ Source6: samba.pamd
 Source200: README.dc
 Source201: README.downgrade
 
-Patch0: samba-4.1.1-Fix-memset-in-ntdb.patch
-Patch1: samba-4.1.0-upn.patch
-Patch2: samba-4.1.2-fix_strict_aliasing.patch
-Patch3: samba-4.1.2-doc.patch
-Patch4: samba-4.1.3-fix_grp_name_sub_in_template_homedir.patch
-Patch5: samba-4.1.3-CVE-2013-4408.patch
-Patch6: samba-4.1.3-fix_build_warnings.patch
-Patch7: samba-4.1.2-winbind_cache_keysize.patch
-Patch8: samba-4.1.3-CVE-2012-6150.patch
-Patch9: samba-4.1.3-winbind_debug.patch
-Patch10: samba-4.1.4-fix_dropbox_regression.patch
-Patch11: samba-4.1.4-fix_G_substitution_in_service_path.patch
-Patch12: samba-4.1.4-fix_winbind_100_percent_childs.patch
-Patch13: samba-4.1.4-Fix-segfault-in-smbd.patch
-Patch14: samba-4.1.4-fix_panic_when_smb2_brlock_times_out.patch
-Patch15: samba-4.1.5-fix_resource_leaks.patch
-Patch16: samba-4.1.5-fix_force_user_sec_ads.patch
-Patch17: samba-4.1.6-fix_one_way_trusts.patch
-Patch18: samba-4.1.6-fix_printer_list_memleadk.patch
-Patch19: samba-4.1.6-fix_pidl_install.patch
-Patch20: samba-4.1.6-fix_nbt_with_more_than_9_components.patch
-Patch21: samba-4.1.6-fix_ipv6_join.patch
-Patch22: samba-4.1.x-CVE-2013-4496.patch
-Patch23: samba-4.1.x-CVE-2013-6442.patch
-Patch24: samba-4.1.6-net_ads_kerberos_pac.patch
-Patch25: samba-4.1.6-fix_service_with_force_user.patch
-Patch26: samba-4.1.6-fix_fragmented_rpc_handling.patch
-Patch27: samba-4.1.7-make_pidl_lsa_struct_public.patch
-Patch28: samba-4.1.7-Make_daemons_systemd_aware.patch
-Patch29: samba-4.1.6-ipv6_workaround.patch
-Patch30: samba-CVE-2014-0244.patch
-Patch31: samba-CVE-2014-3493.patch
-Patch32: samba-CVE-2014-0178.patch
-Patch33: samba-4.1.9-file_open.patch
-Patch34: samba-CVE-2014-3560.patch
-Patch35: samba-4.1.x-CVE-2015-0240.patch
+Patch0: samba-4.1.2-doc.patch
+Patch1: samba-4.1.5-fix_force_user_sec_ads.patch
+Patch2: samba-4.1.6-fix_ipv6_join.patch
+Patch3: samba-4.1.6-net_ads_kerberos_pac.patch
+Patch4: samba-4.1.6-ipv6_workaround.patch
+Patch5: samba-4.1.13-fix_nmbd_systemd_status_update.patch
+Patch6: samba-4.1.13-fix_idmap_ad_getgroups_without_gid.patch
+Patch7: samba-4.1.13-fix_idmap_ad_sfu_with_trusted_domains.patch
+Patch8: samba-4.1.13-fix_smbclient_echo_cmd_segfault.patch
+Patch9: samba-4.1.13-improve_service_principal_guessing_in_net.patch
+Patch10: samba-4.1.13-Fix_overwriting_of_spns_during_net_ads_join.patch
+Patch11: samba-4.1.13-Add_precreated_spns_from_AD_during_keytab_generation.patch
+Patch12: samba-4.1.13-Fix_aes_enctypes.patch
+Patch13: samba-4.1.13-Fix_dnsupdate.patch
+Patch14: samba-4.1.14-fix_netbios_name_truncation.patch
+Patch15: samba-4.1.14-net_ads_join_segfault_on_bigendian.patch
+Patch16: samba-4.1.14-fix_net_ads_join_keytab_segfault.patch
+Patch17: samba-4.1.14-smbclinet_fix_return_of_tcb_browsing.patch
+Patch18: samba-4.1.14-smbstatus_fix_profiles_exit_code.patch
+Patch19: samba-4.1.14-smbstatus_print_root_only_message.patch
+Patch20: samba-4.1.15-fix_kerberos_fetch_pac_segfault.patch
+Patch21: samba-4.2.x-fix_sid_handling_passwd_to_saminfo3.patch
+Patch22: samba-4.1.15-fix_authentication_with_long_netbios_name_set.patch
+Patch23: samba-4.1.15-fix_net_time_segfault.patch
+Patch24: samba-4.1.x-CVE-2015-0240.patch
+
+Patch100: samba-4.2.x-fix_gecos_field_with_samlogon.patch
+Patch101: samba-4.2.x-fix_net_rpc_join_schannel.patch
 
 BuildRoot:      %(mktemp -ud %{_tmppath}/%{name}-%{version}-%{release}-XXXXXX)
 
@@ -174,6 +180,7 @@ BuildRequires: readline-devel
 BuildRequires: systemd-devel
 BuildRequires: sed
 BuildRequires: zlib-devel >= 1.2.3
+
 %if %{with_vfs_glusterfs}
 BuildRequires: glusterfs-api-devel >= 3.4.0.16
 BuildRequires: glusterfs-devel >= 3.4.0.16
@@ -366,6 +373,7 @@ develop programs that link against the SMB client library in the Samba suite.
 %package -n libwbclient
 Summary: The winbind client library
 Group: Applications/System
+Requires: %{name}-libs = %{samba_depver}
 
 %description -n libwbclient
 The libwbclient package contains the winbind client library from the Samba suite.
@@ -405,6 +413,7 @@ Summary: Perl IDL compiler
 Group: Development/Tools
 Requires: perl(Parse::Yapp)
 Requires: perl(:MODULE_COMPAT_%(eval "`%{__perl} -V:version`"; echo $version))
+BuildArch: noarch
 
 Provides: samba4-pidl = %{samba_depver}
 Obsoletes: samba4-pidl < %{samba_depver}
@@ -419,11 +428,14 @@ Summary: Testing tools for Samba servers and clients
 Group: Applications/System
 Requires: %{name} = %{samba_depver}
 Requires: %{name}-common = %{samba_depver}
+Requires: %{name}-winbind = %{samba_depver}
+
+Requires: %{name}-libs = %{samba_depver}
+Requires: %{name}-test-libs = %{samba_depver}
 %if %with_dc
 Requires: %{name}-dc-libs = %{samba_depver}
 %endif
 Requires: %{name}-libs = %{samba_depver}
-Requires: %{name}-winbind = %{samba_depver}
 %if %with_libsmbclient
 Requires: libsmbclient = %{samba_depver}
 %endif
@@ -435,14 +447,24 @@ Provides: samba4-test = %{samba_depver}
 Obsoletes: samba4-test < %{samba_depver}
 
 %description test
-samba4-test provides testing tools for both the server and client
+%{name}-test provides testing tools for both the server and client
 packages of Samba.
+
+### TEST-LIBS
+%package test-libs
+Summary: Libraries need by teh testing tools for Samba servers and clients
+Group: Applications/System
+Requires: %{name}-libs = %{samba_depver}
+
+%description test-libs
+%{name}-test-libs provides libraries required by the testing tools.
 
 ### TEST-DEVEL
 %package test-devel
 Summary: Testing devel files for Samba servers and clients
 Group: Applications/System
-Requires: %{name}-test = %{samba_depver}
+Requires: %{name}-libs = %{samba_depver}
+Requires: %{name}-test-libs = %{samba_depver}
 
 %description test-devel
 samba-test-devel provides testing devel files for both the server and client
@@ -526,42 +548,35 @@ module necessary to communicate to the Winbind Daemon
 %prep
 %setup -q -n samba-%{version}%{pre_release}
 
-%patch0 -p1 -b .samba-4.1.1-Fix-memset-in-ntdb.patch
-%patch1 -p1 -b .samba-4.1.0-upn.patch
-%patch2 -p1 -b .samba-4.1.2-fix_strict_aliasing.patch
-%patch3 -p1 -b .samba-4.1.2-doc.patch
-%patch4 -p1 -b .samba-4.1.3-fix_grp_name_sub_in_template_homedir.patch
-%patch5 -p1 -b .samba-4.1.3-CVE-2013-4408.patch
-%patch6 -p1 -b .samba-4.1.3-fix_build_warnings.patch
-%patch7 -p1 -b .samba-4.1.2-winbind_cache_keysize.patch
-%patch8 -p1 -b .samba-4.1.3-CVE-2012-6150.patch
-%patch9 -p1 -b .samba-4.1.3-winbind_debug.patch
-%patch10 -p1 -b .samba-4.1.4-fix_dropbox_regression.patch
-%patch11 -p1 -b .samba-4.1.4-fix_G_substitution_in_service_path.patch
-%patch12 -p1 -b .samba-4.1.4-fix_winbind_100_percent_childs.patch
-%patch13 -p1 -b .samba-4.1.4-Fix-segfault-in-smbd.patch
-%patch14 -p1 -b .samba-4.1.4-fix_panic_when_smb2_brlock_times_out.patch
-%patch15 -p1 -b .samba-4.1.5-fix_resource_leaks.patch
-%patch16 -p1 -b .samba-4.1.5-fix_force_user_sec_ads.patch
-%patch17 -p1 -b .samba-4.1.6-fix_one_way_trusts.patch
-%patch18 -p1 -b .samba-4.1.6-fix_printer_list_memleadk.patch
-%patch19 -p1 -b .samba-4.1.6-fix_pidl_install.patch
-%patch20 -p1 -b .samba-4.1.6-fix_nbt_with_more_than_9_components.patch
-%patch21 -p1 -b .samba-4.1.6-fix_ipv6_join.patch
-%patch22 -p1 -b .samba-4.1.x-CVE-2013-4496.patch
-%patch23 -p1 -b .samba-4.1.x-CVE-2013-6442.patch
-%patch24 -p1 -b .samba-4.1.6-net_ads_kerberos_pac.patch
-%patch25 -p1 -b .samba-4.1.6-fix_service_with_force_user.patch
-%patch26 -p1 -b .samba-4.1.6-fix_fragmented_rpc_handling.patch
-%patch27 -p1 -b .samba-4.1.7-make_pidl_lsa_struct_public.patch
-%patch28 -p1 -b .samba-4.1.7-Make_daemons_systemd_aware.patch
-%patch29 -p1 -b .samba-4.1.6-ipv6_workaround.patch
-%patch30 -p1 -b .samba-CVE-2014-0244.patch
-%patch31 -p1 -b .samba-CVE-2014-3493.patch
-%patch32 -p1 -b .samba-CVE-2014-0178.patch
-%patch33 -p1 -b .samba-4.1.9-file_open.patch
-%patch34 -p1 -b .samba-CVE-2014-3560.patch
-%patch35 -p1 -b .samba-4.1.x-CVE-2015-0240.patch
+%patch0 -p1 -b .samba-4.1.2-doc.patch
+%patch1 -p1 -b .samba-4.1.5-fix_force_user_sec_ads.patch
+%patch2 -p1 -b .samba-4.1.6-fix_ipv6_join.patch
+%patch3 -p1 -b .samba-4.1.6-net_ads_kerberos_pac.patch
+%patch4 -p1 -b .samba-4.1.6-ipv6_workaround.patch
+%patch5 -p1 -b .samba-4.1.13-fix_nmbd_systemd_status_update.patch
+%patch6 -p1 -b .samba-4.1.13-fix_idmap_ad_getgroups_without_gid.patch
+%patch7 -p1 -b .samba-4.1.13-fix_idmap_ad_sfu_with_trusted_domains.patch
+%patch8 -p1 -b .samba-4.1.13-fix_smbclient_echo_cmd_segfault.patch
+%patch9 -p1 -b .samba-4.1.13-improve_service_principal_guessing_in_net.patch
+%patch10 -p1 -b .samba-4.1.13-Fix_overwriting_of_spns_during_net_ads_join.patch
+%patch11 -p1 -b .samba-4.1.13-Add_precreated_spns_from_AD_during_keytab_generation.patch
+%patch12 -p1 -b .samba-4.1.13-Fix_aes_enctypes.patch
+%patch13 -p1 -b .samba-4.1.13-Fix_dnsupdate.patch
+%patch14 -p1 -b .samba-4.1.14-fix_netbios_name_truncation.patch
+%patch15 -p1 -b .samba-4.1.14-net_ads_join_segfault_on_bigendian.patch
+%patch16 -p1 -b .samba-4.1.14-fix_net_ads_join_keytab_segfault.patch
+%patch17 -p1 -b .samba-4.1.14-smbclinet_fix_return_of_tcb_browsing.patch
+%patch18 -p1 -b .samba-4.1.14-smbstatus_fix_profiles_exit_code.patch
+%patch19 -p1 -b .samba-4.1.14-smbstatus_print_root_only_message.patch
+%patch20 -p1 -b .samba-4.1.15-fix_kerberos_fetch_pac_segfault.patch
+%patch21 -p1 -b .samba-4.2.x-fix_sid_handling_passwd_to_saminfo3.patch
+%patch22 -p1 -b .samba-4.1.15-fix_authentication_with_long_netbios_name_set.patch
+%patch23 -p1 -b .samba-4.1.15-fix_net_time_segfault.patch
+%patch24 -p1 -b .samba-4.1.x-CVE-2015-0240.patch
+
+# schannel support from 4.2.x
+%patch100 -p1 -b .samba-4.1.13-fix_gecos_field_with_samlogon.patch
+%patch101 -p1 -b .samba-4.2.x-fix_net_rpc_join_schannel.patch
 
 %build
 %global _talloc_lib ,talloc,pytalloc,pytalloc-util
@@ -615,7 +630,7 @@ LDFLAGS="-Wl,-z,relro,-z,now" \
         --with-pammodulesdir=%{_libdir}/security \
         --with-lockdir=/var/lib/samba \
         --with-cachedir=/var/lib/samba \
-        --with-perl-vendordir=%{perl_vendorlib} \
+        --with-perl-lib-install-dir=%{perl_vendorlib} \
         --disable-gnutls \
         --disable-rpath-install \
         --with-shared-modules=%{_samba4_modules} \
@@ -668,6 +683,11 @@ install -d -m 0755 %{buildroot}/var/run/samba
 install -d -m 0755 %{buildroot}/var/run/winbindd
 install -d -m 0755 %{buildroot}/%{_libdir}/samba
 install -d -m 0755 %{buildroot}/%{_libdir}/pkgconfig
+
+# Move libwbclient.so* into private directory, it cannot be just libdir/samba
+# because samba uses rpath with this directory.
+install -d -m 0755 %{buildroot}/%{_libdir}/samba/wbclient
+mv %{buildroot}/%{_libdir}/libwbclient.so* %{buildroot}/%{_libdir}/samba/wbclient
 
 # Install other stuff
 install -d -m 0755 %{buildroot}%{_sysconfdir}/logrotate.d
@@ -766,9 +786,33 @@ fi
 %endif # with_libsmbclient
 
 %if %with_libwbclient
-%post -n libwbclient -p /sbin/ldconfig
+%posttrans -n libwbclient
+# It has to be posttrans here to make sure all files of a previous version
+# without alternatives support are removed
+%{_sbindir}/update-alternatives --install %{_libdir}/libwbclient.so.0.11 \
+                                libwbclient.so.0.11%{libwbc_alternatives_suffix} %{_libdir}/samba/wbclient/libwbclient.so.0.11 10
+/sbin/ldconfig
 
-%postun -n libwbclient -p /sbin/ldconfig
+%preun -n libwbclient
+%{_sbindir}/update-alternatives --remove libwbclient.so.0.11%{libwbc_alternatives_suffix} %{_libdir}/samba/wbclient/libwbclient.so.0.11
+/sbin/ldconfig
+
+%posttrans -n libwbclient-devel
+%{_sbindir}/update-alternatives --install %{_libdir}/libwbclient.so \
+                                libwbclient.so%{libwbc_alternatives_suffix} %{_libdir}/samba/wbclient/libwbclient.so 10
+
+%preun -n libwbclient-devel
+# alternatives checks if the file which should be removed is a link or not, but
+# not if it points to the /etc/alternatives directory or to some other place.
+# When downgrading to a version where alternatives is not used and
+# libwbclient.so is a link and not a file it will be removed. The following
+# check removes the alternatives files manually if that is the case.
+if [ "`readlink %{_libdir}/libwbclient.so`" == "libwbclient.so.0.11" ]; then
+    /bin/rm -f /etc/alternatives/libwbclient.so%{libwbc_alternatives_suffix} /var/lib/alternatives/libwbclient.so%{libwbc_alternatives_suffix} 2> /dev/null
+else
+    %{_sbindir}/update-alternatives --remove libwbclient.so%{libwbc_alternatives_suffix} %{_libdir}/samba/wbclient/libwbclient.so
+fi
+
 %endif # with_libwbclient
 
 %post test -p /sbin/ldconfig
@@ -939,7 +983,6 @@ rm -rf %{buildroot}
 %{_bindir}/smbta-util
 %{_bindir}/smbtar
 %{_bindir}/smbtree
-%{_libdir}/samba/libldb-cmdline.so
 %{_mandir}/man1/dbwrap_tool.1*
 %{_mandir}/man1/nmblookup.1*
 %{_mandir}/man1/oLschema2ldif.1*
@@ -1133,6 +1176,7 @@ rm -rf %{buildroot}
 %{_libdir}/samba/service
 %{_libdir}/libdcerpc-server.so.*
 %{_libdir}/samba/libdfs_server_ad.so
+%{_libdir}/samba/libdnsserver_common.so
 %{_libdir}/samba/libdsdb-module.so
 %{_libdir}/samba/libntvfs.so
 %{_libdir}/samba/libposix_eadb.so
@@ -1140,6 +1184,7 @@ rm -rf %{buildroot}
 %else
 %doc packaging/README.dc-libs
 %exclude %{_libdir}/samba/libdfs_server_ad.so
+%exclude %{_libdir}/samba/libdnsserver_common.so
 %endif # with_dc
 
 ### DEVEL
@@ -1496,14 +1541,14 @@ rm -rf %{buildroot}
 %if %with_libwbclient
 %files -n libwbclient
 %defattr(-,root,root)
-%{_libdir}/libwbclient.so.*
+%{_libdir}/samba/wbclient/libwbclient.so.*
 %{_libdir}/samba/libwinbind-client.so
 
 ### LIBWBCLIENT-DEVEL
 %files -n libwbclient-devel
 %defattr(-,root,root)
 %{_includedir}/samba-4.0/wbclient.h
-%{_libdir}/libwbclient.so
+%{_libdir}/samba/wbclient/libwbclient.so
 %{_libdir}/pkgconfig/wbclient.pc
 %endif # with_libwbclient
 
@@ -1559,13 +1604,6 @@ rm -rf %{buildroot}
 %{_bindir}/masktest
 %{_bindir}/ndrdump
 %{_bindir}/smbtorture
-%{_libdir}/libtorture.so.*
-%{_libdir}/samba/libsubunit.so
-%if %with_dc
-%{_libdir}/samba/libdlz_bind9_for_torture.so
-%else
-%{_libdir}/samba/libdsdb-module.so
-%endif
 %{_mandir}/man1/gentest.1*
 %{_mandir}/man1/locktest.1*
 %{_mandir}/man1/masktest.1*
@@ -1578,6 +1616,17 @@ rm -rf %{buildroot}
 %{_libdir}/samba/libnss_wrapper.so
 %{_libdir}/samba/libsocket_wrapper.so
 %{_libdir}/samba/libuid_wrapper.so
+%endif
+
+### TEST-LIBS
+%files test-libs
+%defattr(-,root,root)
+%{_libdir}/libtorture.so.*
+%{_libdir}/samba/libsubunit.so
+%if %with_dc
+%{_libdir}/samba/libdlz_bind9_for_torture.so
+%else
+%{_libdir}/samba/libdsdb-module.so
 %endif
 
 ### TEST-DEVEL
@@ -1628,19 +1677,104 @@ rm -rf %{buildroot}
 %{_mandir}/man8/pam_winbind.8*
 
 %changelog
-* Thu Feb 19 2015 - Guenther Deschner <gdeschner@redhat.com> - 4.1.1-38
-- resolves: #1194132 - CVE-2015-0240: RCE in netlogon server.
+* Mon Feb 16 2015 - Guenther Deschner <gdeschner@redhat.com> - 4.1.12-21
+- related: #1191340 - Update patchset for CVE-2015-0240.
 
-* Fri Aug 01 2014 - Guenther Deschner <gdeschner@redhat.com> - 4.1.1-37
-- resolves: #1126013 - CVE-2014-3560: remote code execution in nmbd.
+* Thu Feb 12 2015 - Guenther Deschner <gdeschner@redhat.com> - 4.1.12-20
+- resolves: #1191340 - CVE-2015-0240: RCE in netlogon server.
 
-* Wed Jul 02 2014 - Guenther Deschner <gdeschner@redhat.com> - 4.1.1-36
-- resolves: #1115490 - Fix potential Samba file corruption.
+* Thu Jan 15 2015 Andreas Schneider <asn@redhat.com> - 4.1.12-18
+- resolves: #1179787 - Fix authentication against Kerberos domains.
+- resolves: #1181319 - Package pam_smbpass again.
+- resolves: #1184023 - Fix authentication with long 'netbios_name' set.
+- resolves: #1183546 - Fix 'net time' segfault.
 
-* Wed Jun 11 2014 - Guenther Deschner <gdeschner@redhat.com> - 4.1.1-35
-- resolves: #1105504 - CVE-2014-0244: DoS in nmbd.
-- resolves: #1108844 - CVE-2014-3493: DoS in smbd with unicode path names.
-- resolves: #1105573 - CVE-2014-0178: Uninitialized memory exposure.
+* Fri Jan 09 2015 - Andreas Schneider <asn@redhat.com> - 4.1.12-17
+- related: #1177768 - Add missing requires to libwbclient.
+
+* Thu Jan 08 2015 Andreas Schneider <asn@redhat.com> - 4.1.12-16
+- related: #1177768 - Add missing requires to libwbclient.
+
+* Thu Jan 08 2015 Andreas Schneider <asn@redhat.com> - 4.1.12-15
+- resolves: #1177768 - Fix possible segfault with 'net ads kerberos pac dump'.
+
+* Tue Dec 16 2014 - Andreas Schneider <asn@redhat.com> - 4.1.12-14
+- resolves: #1171689 - Fix smbstatus if executed as user to print error message.
+
+* Fri Dec 12 2014 - Andreas Schneider <asn@redhat.com> - 4.1.12-13
+- resolves: #1172089 - Fix 'net rpc join' with schannel changes.
+- resolves: #1170883 - Fix 'net time system' segfault.
+
+* Tue Nov 25 2014 - Andreas Schneider <asn@redhat.com> - 4.1.12-12
+- related: #1162526 - Fix multilib with using alternatives for libwbclient.
+
+* Tue Nov 25 2014 - Andreas Schneider <asn@redhat.com> - 4.1.12-11
+- resolves: #1163748 - Fix smbclient -L fails against new Windows versions
+                       over TCP.
+- resolves: #1167849 - Fix smbstatus --profile always returning EXIT_FAILURE.
+
+* Thu Nov 20 2014 - Andreas Schneider <asn@redhat.com> - 4.1.12-10
+- related: #1162526 - Fix multilib with using alternatives for libwbclient.
+
+* Thu Nov 20 2014 - Andreas Schneider <asn@redhat.com> - 4.1.12-9
+- resolves: #1162552 - Fix net ads join segfault on big endian systems.
+- resolves: #1164203 - Fix net ads join segfault with existing keytab.
+
+* Thu Nov 13 2014 - Guenther Deschner <gdeschner@redhat.com> - 4.1.12-8
+- related: #1162526 - Fix multilib issues when using alternatives for libwbclient.
+
+* Wed Nov 12 2014 - Andreas Schneider <asn@redhat.com> - 4.1.12-7
+- resolves: #1162526 - Use alternatives for libwbclient.
+
+* Mon Nov 03 2014 - Andreas Schneider <asn@redhat.com> - 4.1.12-6
+- related: #1156391 - Fix netbios name truncation during registration.
+
+* Wed Oct 29 2014 - Andreas Schneider <asn@redhat.com> - 4.1.12-5
+- resolves: #1156391 - Fix netbios name truncation during registration.
+
+* Thu Oct 09 2014 - Guenther Deschner <gdeschner@redhat.com> - 4.1.12-4
+- related: #1117770 - Fix empty full_name field with samlogon.
+
+* Fri Sep 26 2014 - Guenther Deschner <gdeschner@redhat.com> - 4.1.12-3
+- resolves: #878351 - Fix usage of AES keys by default.
+- resolves: #861366 - Fix KRB5 locator to use same KDC for joining and DNS update.
+
+* Tue Sep 16 2014 - Andreas Schneider <asn@redhat.com> - 4.1.12-2
+- resolves: #1138554 - Fix consuming a lot of CPU when re-reading printcap info.
+- resolves: #1134323 - Fix running Samba on little endian Power8 (ppc64le).
+- resolves: #1113064 - Fix case sensitivity options with SMB2 protocols.
+- resolves: #1088924 - Fix applying ACL masks when setting ACLs.
+- resolves: #1135723 - Fix 'force user' regression.
+- resolves: #1117770 - Fix empty full_name field with samlogon.
+- resolves: #1101210 - Fix telling systemd that nmbd is waiting for interfaces.
+- resolves: #1127931 - Fix getgroups() with idmap_ad returning non-mapped groups.
+- resolves: #1144963 - Fix idmap_ad with SFU against trusted domains.
+- resolves: #1140568 - Fix a segfault in the smbclient echo command.
+- resolves: #1089940 - Improve service principal guessing in 'net ads'.
+- resolves: #955561 - Fix overwriting of SPNs in AD during 'net ads join'.
+- resolves: #955562 - Add precreated SPNS from AD during keytab initialization.
+
+* Mon Sep 08 2014 - Andreas Schneider <asn@redhat.com> - 4.1.12-1
+- related: #1110820 - Rebase Samba to latest release.
+
+* Tue Aug 26 2014 - Andreas Schneider <asn@redhat.com> - 4.1.11-1
+- resolves: #1110820 - Rebase Samba to latest release.
+
+* Mon Aug 25 2014 - Andreas Schneider <asn@redhat.com> - 4.1.1-37
+- resolves: #1072352 - Make pidl a noarch subpackage.
+- resolves: #1133516 - Create a samba-test-libs package.
+- resolves: #1132873 - Add support to rebuild without clustering.
+
+* Fri Aug 01 2014 - Guenther Deschner <gdeschner@redhat.com> - 4.1.1-36
+- resolves: #1126014 - CVE-2014-3560: remote code execution in nmbd.
+
+* Wed Jul 02 2014 - Guenther Deschner <gdeschner@redhat.com> - 4.1.1-35
+- resolves: #1115060 - Fix potential Samba file corruption.
+
+* Wed Jun 11 2014 - Guenther Deschner <gdeschner@redhat.com> - 4.1.1-34
+- resolves: #1105505 - CVE-2014-0244: DoS in nmbd.
+- resolves: #1108845 - CVE-2014-3493: DoS in smbd with unicode path names.
+- resolves: #1105574 - CVE-2014-0178: Uninitialized memory exposure.
 
 * Mon May 05 2014 - Andreas Schneider <asn@redhat.com> - 4.1.1-33
 - related: #717484 - Add missing configure line to enable profiling data support.
