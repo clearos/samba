@@ -6,7 +6,7 @@
 # ctdb is enabled by default, you can disable it with: --without clustering
 %bcond_without clustering
 
-%define main_release 21
+%define main_release 23
 
 %define samba_version 4.1.12
 %define talloc_version 2.1.1
@@ -621,7 +621,7 @@ module necessary to communicate to the Winbind Daemon
 
 %global _samba4_private_libraries %{_libsmbclient}%{_libwbclient}
 
-LDFLAGS="-Wl,-z,relro,-z,now" \
+export LDFLAGS="-Wl,-z,relro,-z,now"
 %configure \
         --enable-fhs \
         --with-piddir=/run \
@@ -1677,6 +1677,12 @@ rm -rf %{buildroot}
 %{_mandir}/man8/pam_winbind.8*
 
 %changelog
+* Thu Apr 09 2015 Andreas Schneider <asn@redhat.com> - 4.1.12-23
+- related: #1208495 - Rebuild Samba with new binutils package.
+
+* Thu Apr 02 2015 Andreas Schneider <asn@redhat.com> - 4.1.12-22
+- resolves: #1208495 - Fix build with RELRO support.
+
 * Mon Feb 16 2015 - Guenther Deschner <gdeschner@redhat.com> - 4.1.12-21
 - related: #1191340 - Update patchset for CVE-2015-0240.
 
