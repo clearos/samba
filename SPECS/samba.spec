@@ -48,8 +48,8 @@
 %global libwbc_alternatives_suffix -64
 %endif
 
-%global with_mitkrb5 1
-%global with_dc 0
+%global with_mitkrb5 0
+%global with_dc 1
 
 %if %{with testsuite}
 # The testsuite only works with a full build right now.
@@ -336,6 +336,8 @@ Samba VFS module for GlusterFS integration.
 Summary: Samba libraries
 Group: Applications/System
 Requires: krb5-libs >= 1.10
+# ClearOS - libldb version requirement - see tracker #2295
+Requires: libldb = %{ldb_version}
 %if %with_libwbclient
 Requires: libwbclient = %{samba_depver}
 %endif
@@ -722,7 +724,7 @@ install -m 0644 %{SOURCE200} packaging/README.dc-libs
 %endif
 
 install -d -m 0755 %{buildroot}%{_unitdir}
-for i in nmb smb winbind ; do
+for i in nmb smb winbind samba; do
     cat packaging/systemd/$i.service | sed -e 's@\[Service\]@[Service]\nEnvironment=KRB5CCNAME=/run/samba/krb5cc_samba@g' >tmp$i.service
     install -m 0644 tmp$i.service %{buildroot}%{_unitdir}/$i.service
 done
@@ -1157,6 +1159,7 @@ rm -rf %{buildroot}
 %{_datadir}/samba/setup
 %{_mandir}/man8/samba.8*
 %{_mandir}/man8/samba-tool.8*
+%{_unitdir}/samba.service
 %else # with_dc
 %doc packaging/README.dc
 %exclude %{_mandir}/man8/samba.8*
@@ -1462,6 +1465,7 @@ rm -rf %{buildroot}
 %{_libdir}/samba/libHDB_SAMBA4.so
 %{_libdir}/samba/libasn1-samba4.so.8
 %{_libdir}/samba/libasn1-samba4.so.8.0.0
+%{_libdir}/samba/libdfs_server_ad.so
 %{_libdir}/samba/libgssapi-samba4.so.2
 %{_libdir}/samba/libgssapi-samba4.so.2.0.0
 %{_libdir}/samba/libhcrypto-samba4.so.5
@@ -1677,6 +1681,9 @@ rm -rf %{buildroot}
 %{_mandir}/man8/pam_winbind.8*
 
 %changelog
+* Wed May 20 2015 - ClearFoundation <developer@clearfoundation.com> - 4.1.12-23.clear
+- enable DC support for integration work
+
 * Thu Apr 09 2015 Andreas Schneider <asn@redhat.com> - 4.1.12-23
 - related: #1208495 - Rebuild Samba with new binutils package.
 
