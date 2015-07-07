@@ -6,7 +6,7 @@ Forked version of samba with ClearOS changes applied
   Add __#kojibuild__ to commit message to automatically build
 
 * git clone git://github.com/clearos/samba.git
-* cd gconsole
+* cd samba
 * git checkout c7
 * git remote add upstream git://git.centos.org/rpms/samba.git
 * git pull upstream c7
