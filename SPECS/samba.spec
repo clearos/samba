@@ -6,7 +6,7 @@
 # ctdb is enabled by default, you can disable it with: --without clustering
 %bcond_without clustering
 
-%define main_release 23
+%define main_release 24
 
 %define samba_version 4.1.12
 %define talloc_version 2.1.1
@@ -127,6 +127,7 @@ Patch24: samba-4.1.x-CVE-2015-0240.patch
 
 Patch100: samba-4.2.x-fix_gecos_field_with_samlogon.patch
 Patch101: samba-4.2.x-fix_net_rpc_join_schannel.patch
+Patch102: samba-4.2.x-fix_netlogon_wo_winbind.patch
 
 BuildRoot:      %(mktemp -ud %{_tmppath}/%{name}-%{version}-%{release}-XXXXXX)
 
@@ -577,6 +578,7 @@ module necessary to communicate to the Winbind Daemon
 # schannel support from 4.2.x
 %patch100 -p1 -b .samba-4.1.13-fix_gecos_field_with_samlogon.patch
 %patch101 -p1 -b .samba-4.2.x-fix_net_rpc_join_schannel.patch
+%patch102 -p1 -b .samba-4.2.x-fix_netlogon_wo_winbind.patch
 
 %build
 %global _talloc_lib ,talloc,pytalloc,pytalloc-util
@@ -1677,6 +1679,9 @@ rm -rf %{buildroot}
 %{_mandir}/man8/pam_winbind.8*
 
 %changelog
+* Mon Aug 31 2015 - Guenther Deschner <gdeschner@redhat.com> - 4.1.12-24
+- resolves: #1258317 - Fix NETLOGON authentication without winbindd.
+
 * Thu Apr 09 2015 Andreas Schneider <asn@redhat.com> - 4.1.12-23
 - related: #1208495 - Rebuild Samba with new binutils package.
 
