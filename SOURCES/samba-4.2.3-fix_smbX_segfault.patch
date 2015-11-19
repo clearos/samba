@@ -1,0 +1,71 @@
+From c638ce839bb7ac754c1cbb61afcc700bac8788fc Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?G=C3=BCnther=20Deschner?= <gd@samba.org>
+Date: Wed, 10 Jun 2015 17:07:15 +0200
+Subject: [PATCH] s3-smbd: reset protocol in smbXsrv_connection_init_tables
+ failure paths.
+
+BUG: https://bugzilla.samba.org/show_bug.cgi?id=11373
+
+Guenther
+
+Pair-Programmed-With: Stefan Metzmacher <metze@samba.org>
+Pair-Programmed-With: Michael Adam <obnox@samba.org>
+
+Signed-off-by: Guenther Deschner <gd@samba.org>
+Signed-off-by: Stefan Metzmacher <metze@samba.org>
+Signed-off-by: Michael Adam <obnox@samba.org>
+Reviewed-by: Andreas Schneider <asn@samba.org>
+---
+ source3/smbd/process.c | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/source3/smbd/process.c b/source3/smbd/process.c
+index 958c82b..c83f3bc 100644
+--- a/source3/smbd/process.c
++++ b/source3/smbd/process.c
+@@ -3464,36 +3464,41 @@ NTSTATUS smbXsrv_connection_init_tables(struct smbXsrv_connection *conn,
+ {
+ 	NTSTATUS status;
+ 
+-	set_Protocol(protocol);
+ 	conn->protocol = protocol;
+ 
+ 	if (protocol >= PROTOCOL_SMB2_02) {
+ 		status = smb2srv_session_table_init(conn);
+ 		if (!NT_STATUS_IS_OK(status)) {
++			conn->protocol = PROTOCOL_NONE;
+ 			return status;
+ 		}
+ 
+ 		status = smb2srv_open_table_init(conn);
+ 		if (!NT_STATUS_IS_OK(status)) {
++			conn->protocol = PROTOCOL_NONE;
+ 			return status;
+ 		}
+ 	} else {
+ 		status = smb1srv_session_table_init(conn);
+ 		if (!NT_STATUS_IS_OK(status)) {
++			conn->protocol = PROTOCOL_NONE;
+ 			return status;
+ 		}
+ 
+ 		status = smb1srv_tcon_table_init(conn);
+ 		if (!NT_STATUS_IS_OK(status)) {
++			conn->protocol = PROTOCOL_NONE;
+ 			return status;
+ 		}
+ 
+ 		status = smb1srv_open_table_init(conn);
+ 		if (!NT_STATUS_IS_OK(status)) {
++			conn->protocol = PROTOCOL_NONE;
+ 			return status;
+ 		}
+ 	}
+ 
++	set_Protocol(protocol);
+ 	return NT_STATUS_OK;
+ }
+ 
+-- 
+2.4.3
+
