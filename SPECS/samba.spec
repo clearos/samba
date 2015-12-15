@@ -6,7 +6,7 @@
 # ctdb is enabled by default, you can disable it with: --without clustering
 %bcond_without clustering
 
-%define main_release 10.1
+%define main_release 10.2
 
 %define samba_version 4.2.3
 %define talloc_version 2.1.2
@@ -1725,7 +1725,7 @@ rm -rf %{buildroot}
 %{_libdir}/samba/libHDB-SAMBA4-samba4.so
 %{_libdir}/samba/libasn1-samba4.so.8
 %{_libdir}/samba/libasn1-samba4.so.8.0.0
-%{_libdir}/samba/libdfs_server_ad.so
+#%{_libdir}/samba/libdfs_server_ad.so
 %{_libdir}/samba/libgssapi-samba4.so.2
 %{_libdir}/samba/libgssapi-samba4.so.2.0.0
 %{_libdir}/samba/libhcrypto-samba4.so.5
