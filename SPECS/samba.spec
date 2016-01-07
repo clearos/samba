@@ -6,7 +6,7 @@
 # ctdb is enabled by default, you can disable it with: --without clustering
 %bcond_without clustering
 
-%define main_release 10
+%define main_release 11
 
 %define samba_version 4.2.3
 %define talloc_version 2.1.2
@@ -117,6 +117,10 @@ Patch4:         samba-4.2.3-fix_net_ads_keytab_segfault.patch
 Patch5:         samba-4.2.3-fix_force_group.patch
 Patch6:         samba-4.2.3-fix_map_to_guest_bad_uid.patch
 Patch7:         samba-4.2.3-fix_nss_wins.patch
+Patch8:		samba-CVE-2015-3223.patch
+Patch9:		samba-CVE-2015-5299.patch
+Patch10:	samba-CVE-2015-5252.patch
+Patch11:	samba-CVE-2015-5296.patch
 
 BuildRoot:      %(mktemp -ud %{_tmppath}/%{name}-%{version}-%{release}-XXXXXX)
 
@@ -697,6 +701,10 @@ and use CTDB instead.
 %patch5 -p1 -b .samba-4.2.3-fix_force_group.patch
 %patch6 -p1 -b .samba-4.2.3-fix_map_to_guest_bad_uid.patch
 %patch7 -p1 -b .samba-4.2.3-fix_nss_wins.patch
+%patch8 -p1 -b .samba-CVE-2015-3223.patch
+%patch9 -p1 -b .samba-CVE-2015-5299.patch
+%patch10 -p1 -b .samba-CVE-2015-5252.patch
+%patch11 -p1 -b .samba-CVE-2015-5296.patch
 
 %build
 %global _talloc_lib ,talloc,pytalloc,pytalloc-util
@@ -1993,6 +2001,14 @@ rm -rf %{buildroot}
 %endif # with_clustering_support
 
 %changelog
+* Fri Dec 11 2015 Guenther Deschner <gdeschner@redhat.com> - 4.2.3-11
+- resolves: #1290710
+- CVE-2015-3223 Remote DoS in Samba (AD) LDAP server
+- CVE-2015-5299 Missing access control check in shadow copy code
+- CVE-2015-5252 Insufficient symlink verification in smbd
+- CVE-2015-5296 Samba client requesting encryption vulnerable to
+                downgrade attack
+
 * Tue Oct 27 2015 Andreas Schneider <asn@redhat.com> - 4.2.3-10
 - related: #1273393 - Fix use after free with nss_wins module loaded
 
