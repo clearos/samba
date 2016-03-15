@@ -6,7 +6,7 @@
 # ctdb is enabled by default, you can disable it with: --without clustering
 %bcond_without clustering
 
-%define main_release 11
+%define main_release 12
 
 %define samba_version 4.2.3
 %define talloc_version 2.1.2
@@ -121,6 +121,7 @@ Patch8:		samba-CVE-2015-3223.patch
 Patch9:		samba-CVE-2015-5299.patch
 Patch10:	samba-CVE-2015-5252.patch
 Patch11:	samba-CVE-2015-5296.patch
+Patch12:        CVE-2015-7560-v4-2.patch
 
 BuildRoot:      %(mktemp -ud %{_tmppath}/%{name}-%{version}-%{release}-XXXXXX)
 
@@ -705,6 +706,7 @@ and use CTDB instead.
 %patch9 -p1 -b .samba-CVE-2015-5299.patch
 %patch10 -p1 -b .samba-CVE-2015-5252.patch
 %patch11 -p1 -b .samba-CVE-2015-5296.patch
+%patch12 -p1 -b .CVE-2015-7560-v4-2.patch
 
 %build
 %global _talloc_lib ,talloc,pytalloc,pytalloc-util
@@ -2001,6 +2003,9 @@ rm -rf %{buildroot}
 %endif # with_clustering_support
 
 %changelog
+* Fri Mar 04 2016 Andreas Schneider <asn@redhat.com> - 4.2.3-12
+- resolves: #1314672 - Fix CVE-2015-7560
+
 * Fri Dec 11 2015 Guenther Deschner <gdeschner@redhat.com> - 4.2.3-11
 - resolves: #1290710
 - CVE-2015-3223 Remote DoS in Samba (AD) LDAP server
