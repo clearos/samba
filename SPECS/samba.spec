@@ -6,9 +6,9 @@
 # ctdb is enabled by default, you can disable it with: --without clustering
 %bcond_without clustering
 
-%define main_release 12
+%define main_release 6
 
-%define samba_version 4.2.3
+%define samba_version 4.2.10
 %define talloc_version 2.1.2
 %define ntdb_version 1.0
 %define tdb_version 1.3.4
@@ -109,19 +109,11 @@ Source6: samba.pamd
 Source200: README.dc
 Source201: README.downgrade
 
-Patch0:         samba-4.2-auth-credentials-if-credentials-have-principal-set-t.patch
-Patch1:         samba-4.2.3-fix_smbX_segfault.patch
-Patch2:         samba-4.2.3-fix_dfree_command.patch
+Patch1:		samba-4.2.10-ldap-sasl-win2003.patch
 Patch3:         samba-4.2.3-document_netbios_length.patch
 Patch4:         samba-4.2.3-fix_net_ads_keytab_segfault.patch
-Patch5:         samba-4.2.3-fix_force_group.patch
-Patch6:         samba-4.2.3-fix_map_to_guest_bad_uid.patch
-Patch7:         samba-4.2.3-fix_nss_wins.patch
-Patch8:		samba-CVE-2015-3223.patch
-Patch9:		samba-CVE-2015-5299.patch
-Patch10:	samba-CVE-2015-5252.patch
-Patch11:	samba-CVE-2015-5296.patch
-Patch12:        CVE-2015-7560-v4-2.patch
+Patch5:         samba-4.2.10-s3-parm-clean-up-defaults-when-removing-global-param.patch
+Patch6:		samba-4.2.10-s3-winbind-make-sure-domain-member-can-talk-to-trust.patch
 
 BuildRoot:      %(mktemp -ud %{_tmppath}/%{name}-%{version}-%{release}-XXXXXX)
 
@@ -694,19 +686,11 @@ and use CTDB instead.
 %prep
 %setup -q -n samba-%{version}%{pre_release}
 
-%patch0 -p1 -b .samba-4.2-auth-credentials-if-credentials-have-principal-set-t.patch
-%patch1 -p1 -b .samba-4.2.3-fix_smbX_segfault.patch
-%patch2 -p1 -b .samba-4.2.3-fix_dfree_command.patch
+%patch1 -p1 -b .samba-4.2.10-ldap-sasl-win2003.patch
 %patch3 -p1 -b .samba-4.2.3-document_netbios_length.patch
 %patch4 -p1 -b .samba-4.2.3-fix_net_ads_keytab_segfault.patch
-%patch5 -p1 -b .samba-4.2.3-fix_force_group.patch
-%patch6 -p1 -b .samba-4.2.3-fix_map_to_guest_bad_uid.patch
-%patch7 -p1 -b .samba-4.2.3-fix_nss_wins.patch
-%patch8 -p1 -b .samba-CVE-2015-3223.patch
-%patch9 -p1 -b .samba-CVE-2015-5299.patch
-%patch10 -p1 -b .samba-CVE-2015-5252.patch
-%patch11 -p1 -b .samba-CVE-2015-5296.patch
-%patch12 -p1 -b .CVE-2015-7560-v4-2.patch
+%patch5 -p1 -b .samba-4.2.10-s3-parm-clean-up-defaults-when-removing-global-param.patch
+%patch6 -p1 -b .samba-4.2.10-s3-winbind-make-sure-domain-member-can-talk-to-trust.patch
 
 %build
 %global _talloc_lib ,talloc,pytalloc,pytalloc-util
@@ -880,6 +864,17 @@ install -m 0755 packaging/NetworkManager/30-winbind-systemd \
 # winbind krb5 locator
 install -d -m 0755 %{buildroot}%{_libdir}/krb5/plugins/libkrb5
 touch %{buildroot}%{_libdir}/krb5/plugins/libkrb5/winbind_krb5_locator.so
+
+%if ! %with_dc
+for i in %{_libdir}/samba/libdfs-server-ad-samba4.so \
+	 %{_libdir}/samba/libdnsserver-common-samba4.so \
+	 %{_mandir}/man8/samba.8 \
+	 %{_mandir}/man8/samba-tool.8 \
+	 %{_libdir}/samba/ldb/ildap.so \
+	 %{_libdir}/samba/ldb/ldbsamba_extensions.so ; do
+	rm -f %{buildroot}$i
+done
+%endif
 
 # This makes the right links, as rpmlint requires that
 # the ldconfig-created links be recorded in the RPM.
@@ -1357,6 +1352,7 @@ rm -rf %{buildroot}
 %config(noreplace) %{_sysconfdir}/logrotate.d/samba
 %attr(0700,root,root) %dir /var/log/samba
 %attr(0700,root,root) %dir /var/log/samba/old
+%attr(0755,root,root) %dir /var/lib/samba
 %ghost %dir /var/run/samba
 %ghost %dir /var/run/winbindd
 %attr(700,root,root) %dir /var/lib/samba/private
@@ -1469,11 +1465,6 @@ rm -rf %{buildroot}
 %{_mandir}/man8/samba-tool.8*
 %else # with_dc
 %doc packaging/README.dc
-%exclude %{_mandir}/man8/samba.8*
-%exclude %{_mandir}/man8/samba-tool.8*
-%exclude %{_libdir}/samba/ldb/ildap.so
-%exclude %{_libdir}/samba/ldb/ldbsamba_extensions.so
-
 %endif # with_dc
 
 ### DC-LIBS
@@ -1512,8 +1503,6 @@ rm -rf %{buildroot}
 %{_libdir}/samba/bind9/dlz_bind9_9.so
 %else
 %doc packaging/README.dc-libs
-%exclude %{_libdir}/samba/libdfs-server-ad-samba4.so
-%exclude %{_libdir}/samba/libdnsserver-common-samba4.so
 %endif # with_dc
 
 ### DEVEL
@@ -2003,6 +1992,29 @@ rm -rf %{buildroot}
 %endif # with_clustering_support
 
 %changelog
+* Tue Apr 12 2016 Alexander Bokovoy <abokovoy@redhat.com> - 4.2.10-6
+- Fix domain member winbind not being able to talk to trusted domains' DCs
+- relates: #1322690
+
+* Mon Apr 11 2016 Alexander Bokovoy <abokovoy@redhat.com> - 4.2.10-5
+- Fix crash in smb.conf processing
+- relates: #1322690
+
+* Fri Apr 08 2016 Alexander Bokovoy <abokovoy@redhat.com> - 4.2.10-4
+- Fix LDAP SASL bind with arcfour-hmac-md5
+- resolves: #1322690
+
+* Thu Apr 07 2016 Alexander Bokovoy <abokovoy@redhat.com> - 4.2.10-3
+- Make sure the package owns /var/lib/samba and uses it for cache purposes
+- resolves: #1322690
+
+* Wed Apr 06 2016 Alexander Bokovoy <abokovoy@redhat.com> - 4.2.10-2
+- Remove ldb modules and internal libraries for DC when not packaging DC build
+- resolves: #1322690
+
+* Mon Apr 04 2016 Alexander Bokovoy <abokovoy@redhat.com> - 4.2.10-1
+- resolves: #1322690
+
 * Fri Mar 04 2016 Andreas Schneider <asn@redhat.com> - 4.2.3-12
 - resolves: #1314672 - Fix CVE-2015-7560
 
