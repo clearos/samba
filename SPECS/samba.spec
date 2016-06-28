@@ -6,7 +6,7 @@
 # ctdb is enabled by default, you can disable it with: --without clustering
 %bcond_without clustering
 
-%define main_release 6
+%define main_release 6.2
 
 %define samba_version 4.2.10
 %define talloc_version 2.1.2
@@ -109,11 +109,16 @@ Source6: samba.pamd
 Source200: README.dc
 Source201: README.downgrade
 
-Patch1:		samba-4.2.10-ldap-sasl-win2003.patch
-Patch3:         samba-4.2.3-document_netbios_length.patch
-Patch4:         samba-4.2.3-fix_net_ads_keytab_segfault.patch
-Patch5:         samba-4.2.10-s3-parm-clean-up-defaults-when-removing-global-param.patch
-Patch6:		samba-4.2.10-s3-winbind-make-sure-domain-member-can-talk-to-trust.patch
+Patch1:     samba-4.2.10-ldap-sasl-win2003.patch
+Patch3:     samba-4.2.3-document_netbios_length.patch
+Patch4:     samba-4.2.3-fix_net_ads_keytab_segfault.patch
+Patch5:     samba-4.2.10-s3-parm-clean-up-defaults-when-removing-global-param.patch
+Patch6:     samba-4.2.10-s3-winbind-make-sure-domain-member-can-talk-to-trust.patch
+Patch7:     samba-4.2.10-badlock-bugfixes.patch
+Patch8:     samba-4.2.10-fix_rpcclient_ipc_signing.patch
+Patch9:     samba-4.2.10-fix_ntlm_auth_issues.patch
+Patch10:    samba-4.2.10-fix_msrpc_parse.patch
+Patch11:    samba-4.2.10-fix_anon_with_singing_mandatory.patch
 
 BuildRoot:      %(mktemp -ud %{_tmppath}/%{name}-%{version}-%{release}-XXXXXX)
 
@@ -692,6 +697,11 @@ and use CTDB instead.
 %patch4 -p1 -b .samba-4.2.3-fix_net_ads_keytab_segfault.patch
 %patch5 -p1 -b .samba-4.2.10-s3-parm-clean-up-defaults-when-removing-global-param.patch
 %patch6 -p1 -b .samba-4.2.10-s3-winbind-make-sure-domain-member-can-talk-to-trust.patch
+%patch7 -p1 -b .samba-4.2.10-badlock-bugfixes.patch
+%patch8 -p1 -b .samba-4.2.10-fix_rpcclient_ipc_signing.patch
+%patch9 -p1 -b .samba-4.2.10-fix_ntlm_auth_issues.patch
+%patch10 -p1 -b .samba-4.2.10-fix_msrpc_parse.patch
+%patch11 -p1 -b .samba-4.2.10-fix_anon_with_singing_mandatory.patch
 
 %build
 %global _talloc_lib ,talloc,pytalloc,pytalloc-util
@@ -1995,8 +2005,23 @@ rm -rf %{buildroot}
 %endif # with_clustering_support
 
 %changelog
-* Tue Apr 12 2016 - ClearFoundation <developer@clearfoundation.com> - 4.2.10-6.clear
+* Tue Jun 28 2016 - ClearFoundation <developer@clearfoundation.com> - 4.2.10-6.2.clear
 - enable DC support for integration work
+
+* Wed Jun 01 2016 Andreas Schneider <asn@redhat.com> - 4.2.10-6.2
+- related: #1333794 - Fix issues caused by security tightening for Badlock
+  o ntlm_auth issues and segfault
+  o rpcclient doesn't respect "client ipc *" options
+  o fix anonymous authentication if signing is mandatory
+
+* Fri May 06 2016 Alexander Bokovoy <abokovoy@redhat.com> - 4.2.10-6.1
+- Fix issues caused by security tightening for Badlock:
+  - Only validate MIC when "map to guest" is set
+  - NetApp SMB servers don't negotiate NTLMSSP_SIGN
+  - Anonymous connections don't work anymore
+  - wbinfo -u or 'net ads search' don't work anymore
+  - Handle empty session in client code
+- resolves: #1333794
 
 * Tue Apr 12 2016 Alexander Bokovoy <abokovoy@redhat.com> - 4.2.10-6
 - Fix domain member winbind not being able to talk to trusted domains' DCs
