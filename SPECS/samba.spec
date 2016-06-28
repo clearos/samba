@@ -20,7 +20,7 @@
 %if "x%{?pre_release}" != "x"
 %define samba_release 0.%{main_release}.%{pre_release}%{?dist}
 %else
-%define samba_release %{main_release}%{?dist}
+%define samba_release %{main_release}%{?dist}.1
 %endif
 
 # This is a network daemon, do a hardened build.
@@ -396,7 +396,7 @@ Samba VFS module for GlusterFS integration.
 Summary: Samba libraries
 Group: Applications/System
 Requires: krb5-libs >= 1.10
-Requires: libldb = %{ldb_version}
+Requires: libldb
 Requires: %{name}-client-libs = %{samba_depver}
 %if %with_libwbclient
 Requires: libwbclient = %{samba_depver}
