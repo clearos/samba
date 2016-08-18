@@ -6,7 +6,7 @@
 # ctdb is enabled by default, you can disable it with: --without clustering
 %bcond_without clustering
 
-%define main_release 6.2
+%define main_release 7
 
 %define samba_version 4.2.10
 %define talloc_version 2.1.2
@@ -119,6 +119,9 @@ Patch8:     samba-4.2.10-fix_rpcclient_ipc_signing.patch
 Patch9:     samba-4.2.10-fix_ntlm_auth_issues.patch
 Patch10:    samba-4.2.10-fix_msrpc_parse.patch
 Patch11:    samba-4.2.10-fix_anon_with_singing_mandatory.patch
+Patch12:    samba-4.2.99-fix_idmap_hash_with_other_modules.path
+Patch13:    samba-4.2.99-net_ads_join_fix_keytab_generation.patch
+Patch14:    CVE-2016-2119-v4-2.patch
 
 BuildRoot:      %(mktemp -ud %{_tmppath}/%{name}-%{version}-%{release}-XXXXXX)
 
@@ -702,6 +705,9 @@ and use CTDB instead.
 %patch9 -p1 -b .samba-4.2.10-fix_ntlm_auth_issues.patch
 %patch10 -p1 -b .samba-4.2.10-fix_msrpc_parse.patch
 %patch11 -p1 -b .samba-4.2.10-fix_anon_with_singing_mandatory.patch
+%patch12 -p1 -b .samba-4.2.99-fix_idmap_hash_with_other_modules.path
+%patch13 -p1 -b .samba-4.2.99-net_ads_join_fix_keytab_generation.patch
+%patch14 -p1 -b .CVE-2016-2119-v4-2.patch
 
 %build
 %global _talloc_lib ,talloc,pytalloc,pytalloc-util
@@ -2007,6 +2013,13 @@ rm -rf %{buildroot}
 %changelog
 * Tue Jun 28 2016 - ClearFoundation <developer@clearfoundation.com> - 4.2.10-6.2.clear
 - enable DC support for integration work
+
+* Mon Jul 04 2016 Andreas Schneider <asn@redhat.com> - 4.2.10-7
+- resolves: #1351960 - Fix CVE-2016-2119
+
+* Tue Jun 28 2016 Andreas Schneider <asn@redhat.com> - 4.2.10-6.3
+- resolves: #1350759 - Fix idmap_hash when used with other modules
+- resolves: #1351260 - Fix krb5 encryption type setup during join
 
 * Wed Jun 01 2016 Andreas Schneider <asn@redhat.com> - 4.2.10-6.2
 - related: #1333794 - Fix issues caused by security tightening for Badlock
