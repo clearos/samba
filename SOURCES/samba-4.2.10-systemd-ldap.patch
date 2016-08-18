@@ -1,0 +1,11 @@
+diff -rup samba-4.2.10/packaging/systemd/winbind.service samba-4.2.10-systemd-ldap/packaging/systemd/winbind.service
+--- samba-4.2.10/packaging/systemd/winbind.service	2014-10-01 04:12:21.000000000 -0400
++++ samba-4.2.10-systemd-ldap/packaging/systemd/winbind.service	2016-08-18 12:28:53.589097971 -0400
+@@ -1,6 +1,6 @@
+ [Unit]
+ Description=Samba Winbind Daemon
+-After=syslog.target network.target nmb.service
++After=syslog.target network.target nmb.service slapd.service
+ 
+ [Service]
+ Type=notify
