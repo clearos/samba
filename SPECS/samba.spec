@@ -122,6 +122,7 @@ Patch11:    samba-4.2.10-fix_anon_with_singing_mandatory.patch
 Patch12:    samba-4.2.99-fix_idmap_hash_with_other_modules.path
 Patch13:    samba-4.2.99-net_ads_join_fix_keytab_generation.patch
 Patch14:    CVE-2016-2119-v4-2.patch
+Patch100:   samba-4.2.10-systemd-ldap.patch
 
 BuildRoot:      %(mktemp -ud %{_tmppath}/%{name}-%{version}-%{release}-XXXXXX)
 
@@ -708,6 +709,7 @@ and use CTDB instead.
 %patch12 -p1 -b .samba-4.2.99-fix_idmap_hash_with_other_modules.path
 %patch13 -p1 -b .samba-4.2.99-net_ads_join_fix_keytab_generation.patch
 %patch14 -p1 -b .CVE-2016-2119-v4-2.patch
+%patch100 -p1 -b .samba-4.2.10-systemd-ldap.patch
 
 %build
 %global _talloc_lib ,talloc,pytalloc,pytalloc-util
@@ -2011,8 +2013,9 @@ rm -rf %{buildroot}
 %endif # with_clustering_support
 
 %changelog
-* Tue Jun 28 2016 - ClearFoundation <developer@clearfoundation.com> - 4.2.10-6.2.clear
+* Thu Aug 18 2016 - ClearFoundation <developer@clearfoundation.com> - 4.2.10-7.clear
 - enable DC support for integration work
+- adjust systemd nmb.service for OpenLDAP deployments
 
 * Mon Jul 04 2016 Andreas Schneider <asn@redhat.com> - 4.2.10-7
 - resolves: #1351960 - Fix CVE-2016-2119
