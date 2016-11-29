@@ -1,0 +1,88 @@
+From 70bab87ab37d30521a65056fd6f6a3f4f8bf6716 Mon Sep 17 00:00:00 2001
+From: Michael Adam <obnox@samba.org>
+Date: Mon, 15 Aug 2016 23:07:33 +0200
+Subject: [PATCH 1/2] idmap: don't generally forbid id==0 from
+ idmap_unix_id_is_in_range()
+
+If the range allows it, then id==0 should not be forbidden.
+This seems to have been taken in from idmap_ldap when the
+function was originally created.
+
+See 634cd2e0451d4388c3e3f78239495cf595368b15 .
+The other backends don't seem to have had that
+extra check for id == 0.
+
+The reasoning for this change is that the range check should
+apply to all cases. If the range includes the 0, then it
+should be possible to get it as result. In particular,
+this way, the function becomes applicable also to the
+passdb backend case, e.g. in a samba4-ad-dc setup where
+the Admin gets uid == 0.
+
+BUG: https://bugzilla.samba.org/show_bug.cgi?id=12155
+
+Signed-off-by: Michael Adam <obnox@samba.org>
+Reviewed-by: Volker Lendecke <vl@samba.org>
+Reviewed-by: Andreas Schneider <asn@samba.org>
+(cherry picked from commit c21976d4b1c604699299f2c0f768c1add93b349d)
+---
+ source3/winbindd/idmap_util.c | 5 -----
+ 1 file changed, 5 deletions(-)
+
+diff --git a/source3/winbindd/idmap_util.c b/source3/winbindd/idmap_util.c
+index f90565f..b6f7b52 100644
+--- a/source3/winbindd/idmap_util.c
++++ b/source3/winbindd/idmap_util.c
+@@ -160,11 +160,6 @@ backend:
+  */
+ bool idmap_unix_id_is_in_range(uint32_t id, struct idmap_domain *dom)
+ {
+-	if (id == 0) {
+-		/* 0 is not an allowed unix id for id mapping */
+-		return false;
+-	}
+-
+ 	if ((dom->low_id && (id < dom->low_id)) ||
+ 	    (dom->high_id && (id > dom->high_id)))
+ 	{
+-- 
+2.7.4
+
+
+From 739167276bc26dfc62acdd96cc9cadb5f88dd02b Mon Sep 17 00:00:00 2001
+From: Michael Adam <obnox@samba.org>
+Date: Tue, 9 Aug 2016 18:25:12 +0200
+Subject: [PATCH 2/2] idmap: centrally check that unix IDs returned by the
+ idmap backends are in range
+
+Note: in the long run, it might be good to move this kind of
+exit check (before handing the result back to the client)
+to the parent winbindd code.
+
+BUG: https://bugzilla.samba.org/show_bug.cgi?id=12155
+
+Signed-off-by: Michael Adam <obnox@samba.org>
+
+(Backported from master commit b2bf61307cffd8ff7b6fb9852c107ab763653119.)
+---
+ source3/winbindd/winbindd_dual_srv.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/source3/winbindd/winbindd_dual_srv.c b/source3/winbindd/winbindd_dual_srv.c
+index cdd9bbd..630d28a 100644
+--- a/source3/winbindd/winbindd_dual_srv.c
++++ b/source3/winbindd/winbindd_dual_srv.c
+@@ -203,6 +203,10 @@ NTSTATUS _wbint_Sids2UnixIDs(struct pipes_struct *p,
+ 		for (j=0; j<num_ids; j++) {
+ 			struct wbint_TransID *id = &r->in.ids->ids[id_idx[j]];
+ 
++			if (!idmap_unix_id_is_in_range(ids[j].xid.id, dom)) {
++				ids[j].status = ID_UNMAPPED;
++			}
++
+ 			if (ids[j].status != ID_MAPPED) {
+ 				id->xid.id = UINT32_MAX;
+ 				id->xid.type = ID_TYPE_NOT_SPECIFIED;
+-- 
+2.7.4
+
