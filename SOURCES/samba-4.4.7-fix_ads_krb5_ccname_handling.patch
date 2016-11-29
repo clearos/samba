@@ -1,0 +1,147 @@
+From d29b108d879b4de27d235a1692e090c0993582df Mon Sep 17 00:00:00 2001
+From: Stefan Metzmacher <metze@samba.org>
+Date: Wed, 6 Jul 2016 12:48:11 +0200
+Subject: [PATCH 1/2] libads: ensure the right ccache is used during gssapi
+ bind
+
+When doing gssapi sasl bind:
+1. Try working without kinit only if a password is not
+   provided
+2. When using kinit, ensure the KRB5CCNAME env var is set
+   to a private memory ccache, so that the bind is on behalf
+   of the requested user.
+
+BUG: https://bugzilla.samba.org/show_bug.cgi?id=12007
+
+Signed-off-by: Stefan Metzmacher <metze@samba.org>
+Reviewed-by: Uri Simchoni <uri@samba.org>
+(cherry picked from commit 2672968851966e5c01e4fc4d906b45b5c047e655)
+---
+ source3/libads/sasl.c | 23 ++++++++++++++++-------
+ 1 file changed, 16 insertions(+), 7 deletions(-)
+
+diff --git a/source3/libads/sasl.c b/source3/libads/sasl.c
+index d76d872..6c054cd 100644
+--- a/source3/libads/sasl.c
++++ b/source3/libads/sasl.c
+@@ -26,6 +26,7 @@
+ #include "smb_krb5.h"
+ #include "system/gssapi.h"
+ #include "lib/param/loadparm.h"
++#include "krb5_env.h"
+ 
+ #ifdef HAVE_LDAP
+ 
+@@ -1015,21 +1016,29 @@ static ADS_STATUS ads_sasl_gssapi_bind(ADS_STRUCT *ads)
+ {
+ 	ADS_STATUS status;
+ 	struct ads_service_principal p;
++	const char *ccache_name = "MEMORY:ads_sasl_gssapi_do_bind";
+ 
+ 	status = ads_generate_service_principal(ads, &p);
+ 	if (!ADS_ERR_OK(status)) {
+ 		return status;
+ 	}
+ 
+-	status = ads_sasl_gssapi_do_bind(ads, p.name);
+-	if (ADS_ERR_OK(status)) {
+-		ads_free_service_principal(&p);
+-		return status;
+-	}
++	if (ads->auth.password == NULL ||
++	    ads->auth.password[0] == '\0') {
++		status = ads_sasl_gssapi_do_bind(ads, p.name);
++		if (ADS_ERR_OK(status)) {
++			ads_free_service_principal(&p);
++			return status;
++		}
+ 
+-	DEBUG(10,("ads_sasl_gssapi_do_bind failed with: %s, "
+-		  "calling kinit\n", ads_errstr(status)));
++		DEBUG(10,("ads_sasl_gssapi_do_bind failed with: %s, "
++			  "calling kinit\n", ads_errstr(status)));
++	}
+ 
++	if (ads->auth.ccache_name != NULL) {
++		ccache_name = ads->auth.ccache_name;
++	}
++	setenv(KRB5_ENV_CCNAME, ccache_name, 1);
+ 	status = ADS_ERROR_KRB5(ads_kinit_password(ads));
+ 
+ 	if (ADS_ERR_OK(status)) {
+-- 
+2.5.5
+
+
+From 416ba773c332288e948871d8f649c0310a94f906 Mon Sep 17 00:00:00 2001
+From: Stefan Metzmacher <metze@samba.org>
+Date: Wed, 6 Jul 2016 12:44:11 +0200
+Subject: [PATCH 2/2] libads: ensure the right ccache is used during spnego
+ bind
+
+When doing spnego sasl bind:
+1. Try working without kinit only if a password is not
+   provided
+2. When using kinit, ensure the KRB5CCNAME env var is set
+   to a private memory ccache, so that the bind is on behalf
+   of the requested user.
+
+BUG: https://bugzilla.samba.org/show_bug.cgi?id=12007
+
+Signed-off-by: Stefan Metzmacher <metze@samba.org>
+Reviewed-by: Uri Simchoni <uri@samba.org>
+
+Autobuild-User(master): Stefan Metzmacher <metze@samba.org>
+Autobuild-Date(master): Tue Jul 12 03:23:33 CEST 2016 on sn-devel-144
+
+(cherry picked from commit a1743de74f09d5bf695f077f5127d02352a014e2)
+---
+ source3/libads/sasl.c | 29 ++++++++++++++++++++---------
+ 1 file changed, 20 insertions(+), 9 deletions(-)
+
+diff --git a/source3/libads/sasl.c b/source3/libads/sasl.c
+index 6c054cd..85a2eb0 100644
+--- a/source3/libads/sasl.c
++++ b/source3/libads/sasl.c
+@@ -749,18 +749,29 @@ static ADS_STATUS ads_sasl_spnego_bind(ADS_STRUCT *ads)
+ 	if (!(ads->auth.flags & ADS_AUTH_DISABLE_KERBEROS) &&
+ 	    got_kerberos_mechanism) 
+ 	{
+-		status = ads_sasl_spnego_gensec_bind(ads, "GSS-SPNEGO",
+-						     CRED_MUST_USE_KERBEROS,
+-						     p.service, p.hostname,
+-						     blob);
+-		if (ADS_ERR_OK(status)) {
+-			ads_free_service_principal(&p);
+-			goto done;
++		const char *ccache_name = "MEMORY:ads_sasl_spnego_bind";
++		if (ads->auth.ccache_name != NULL) {
++			ccache_name = ads->auth.ccache_name;
+ 		}
+ 
+-		DEBUG(10,("ads_sasl_spnego_gensec_bind(KRB5) failed with: %s, "
+-			  "calling kinit\n", ads_errstr(status)));
++		if (ads->auth.password == NULL ||
++		    ads->auth.password[0] == '\0')
++		{
++
++			status = ads_sasl_spnego_gensec_bind(ads, "GSS-SPNEGO",
++							     CRED_MUST_USE_KERBEROS,
++							     p.service, p.hostname,
++							     blob);
++			if (ADS_ERR_OK(status)) {
++				ads_free_service_principal(&p);
++				goto done;
++			}
++
++			DEBUG(10,("ads_sasl_spnego_gensec_bind(KRB5) failed with: %s, "
++				  "calling kinit\n", ads_errstr(status)));
++		}
+ 
++		setenv(KRB5_ENV_CCNAME, ccache_name, 1);
+ 		status = ADS_ERROR_KRB5(ads_kinit_password(ads)); 
+ 
+ 		if (ADS_ERR_OK(status)) {
+-- 
+2.5.5
+
