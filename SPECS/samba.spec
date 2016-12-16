@@ -194,11 +194,11 @@ BuildRequires: libcephfs1-devel
 %endif
 
 # Allow build with testsuite which uses heimdal
-#%if %{with_dc}
-#BuildRequires: gnutls-devel >= 3.4.7
+%if %{with_dc}
+BuildRequires: gnutls-devel
 # Required by samba-tool
 #BuildRequires: python-crypto
-#%endif
+%endif
 
 # pidl requirements
 BuildRequires: perl(Parse::Yapp)
