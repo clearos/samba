@@ -2030,7 +2030,7 @@ rm -rf %{buildroot}
 %endif # with_clustering_support
 
 %changelog
-* Tue Jan 17 2016 - ClearFoundation <developer@clearfoundation.com> - 4.4.4-11.clear
+* Tue Jan 17 2017 - ClearFoundation <developer@clearfoundation.com> - 4.4.4-11.clear
 - enable DC support for integration work
 - adjust systemd nmb.service for OpenLDAP deployments
 
