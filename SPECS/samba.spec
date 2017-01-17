@@ -6,7 +6,7 @@
 # ctdb is enabled by default, you can disable it with: --without clustering
 %bcond_without clustering
 
-%define main_release 9
+%define main_release 12
 
 %define samba_version 4.4.4
 %define talloc_version 2.1.6
@@ -117,6 +117,9 @@ Patch6:    samba-4.4.7-fix_ads_krb5_ccname_handling.patch
 Patch7:    samba-4.4.7-fix_smbclient_cpu_usage_with_unreachable_ip.patch
 Patch8:    samba-4.4.7-fix_idmap_range_checks.patch
 Patch9:    samba-4.4.7-fix_smget_auth_callback.patch
+Patch10:   samba-4.4.6-fix_nss_wins.patch
+Patch11:   samba-4.4.7-fix_group_substituion_with_ad.patch
+Patch12:   samba-4.4.6-fix_smbclient_against_apple_and_azure.patch
 
 BuildRoot:      %(mktemp -ud %{_tmppath}/%{name}-%{version}-%{release}-XXXXXX)
 
@@ -711,6 +714,9 @@ and use CTDB instead.
 %patch7 -p1 -b .samba-4.4.7-fix_smbclient_cpu_usage_with_unreachable_ip.patch
 %patch8 -p1 -b .samba-4.4.7-fix_idmap_range_checks.patch
 %patch9 -p1 -b .samba-4.4.7-fix_smget_auth_callback.patch
+%patch10 -p1 -b .samba-4.4.6-fix_nss_wins.patch
+%patch11 -p1 -b .samba-4.4.7-fix_group_substituion_with_ad.patch
+%patch12 -p1 -b .samba-4.4.6-fix_smbclient_against_apple_and_azure.patch
 
 %build
 %global _talloc_lib ,talloc,pytalloc,pytalloc-util
@@ -939,7 +945,7 @@ fi
 
 %postun client
 if [ $1 -eq 0 ] ; then
-    %{_sbindir}/update-alternatives --remove cups_backend_smb %{_libexecdir}/samba/smbspool
+    %{_sbindir}/update-alternatives --remove cups_backend_smb %{_bindir}/smbspool
 fi
 
 %post client-libs -p /sbin/ldconfig
@@ -2019,6 +2025,19 @@ rm -rf %{buildroot}
 %endif # with_clustering_support
 
 %changelog
+* Tue Nov 15 2016 Andreas Schneider <asn@redhat.com> - 4.4.4-11
+- related: #1393051 - Fix return code if ip not defined in gethostbyname
+
+* Wed Nov 09 2016 Andreas Schneider <asn@redhat.com> - 4.4.4-11
+- related: #1393048 - Add missing patch to patchset
+
+* Tue Nov 08 2016 Andreas Schneider <asn@redhat.com> - 4.4.4-10
+- resolves: #1393050 - Fix linking nss_wins with libreplace
+- resolves: #1393051 - Fix nss_wins function definitions for gethostbyname*
+- resolves: #1393048 - Fix %G substitution in AD case
+- resolves: #1393052 - Fix regression of smbclient unable to connect to
+                       Apple and Azure
+
 * Wed Aug 31 2016 Andreas Schneider <asn@redhat.com> - 4.4.4-9
 - related: #1365479 - Fix idmap range check
 
