@@ -1,0 +1,109 @@
+From 6dfc274ce5ae036a95ac2d7f6f9182c7f5a5b50f Mon Sep 17 00:00:00 2001
+From: Andreas Schneider <asn@samba.org>
+Date: Mon, 19 Sep 2016 13:59:54 +0200
+Subject: [PATCH] s3-lib: Fix %G substitution in AD member environment
+
+If we are a domain member we should look up the user with the domain
+name specified else it will only work if we have
+'winbind use default domain' set.
+
+BUG: https://bugzilla.samba.org/show_bug.cgi?id=12276
+
+Signed-off-by: Andreas Schneider <asn@samba.org>
+Reviewed-by: Ralph Boehme <slow@samba.org>
+(cherry picked from commit 619ca5f63c47ff8b021692aaa756dcb0d883b8dd)
+---
+ source3/lib/substitute.c | 24 ++++++++++++++++++------
+ 1 file changed, 18 insertions(+), 6 deletions(-)
+
+diff --git a/source3/lib/substitute.c b/source3/lib/substitute.c
+index 4e2ce9b..1f98327 100644
+--- a/source3/lib/substitute.c
++++ b/source3/lib/substitute.c
+@@ -499,15 +499,18 @@ char *talloc_sub_basic(TALLOC_CTX *mem_ctx,
+ 			break;
+ 		case 'G' : {
+ 			struct passwd *pass;
++			bool is_domain_name = false;
++			const char *sep = lp_winbind_separator();
+ 
+ 			if (domain_name != NULL && domain_name[0] != '\0' &&
+-			    !strequal(domain_name, my_sam_name()))
+-			{
++			    (lp_security() == SEC_ADS ||
++			     lp_security() == SEC_DOMAIN)) {
+ 				r = talloc_asprintf(tmp_ctx,
+ 						    "%s%c%s",
+ 						    domain_name,
+-						    *lp_winbind_separator(),
++						    *sep,
+ 						    smb_name);
++				is_domain_name = true;
+ 			} else {
+ 				r = talloc_strdup(tmp_ctx, smb_name);
+ 			}
+@@ -517,9 +520,18 @@ char *talloc_sub_basic(TALLOC_CTX *mem_ctx,
+ 
+ 			pass = Get_Pwnam_alloc(tmp_ctx, r);
+ 			if (pass != NULL) {
+-				a_string = realloc_string_sub(
+-					a_string, "%G",
+-					gidtoname(pass->pw_gid));
++				char *group_name;
++
++				group_name = gidtoname(pass->pw_gid);
++				if (is_domain_name) {
++					p = strchr_m(group_name, *sep);
++					if (p != NULL) {
++						group_name = p + 1;
++					}
++				}
++				a_string = realloc_string_sub(a_string,
++							      "%G",
++							      group_name);
+ 			}
+ 			TALLOC_FREE(pass);
+ 			break;
+-- 
+2.10.1
+
+From d851e487422808b6d3ba2738daa1c697e569bd27 Mon Sep 17 00:00:00 2001
+From: Volker Lendecke <vl@samba.org>
+Date: Wed, 12 Oct 2016 12:35:12 +0200
+Subject: [PATCH] lib: Fix CID 1373623 Dereference after null check
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+We should not overload "p", this is used in the outer loop
+
+BUG: https://bugzilla.samba.org/show_bug.cgi?id=12276
+Signed-off-by: Volker Lendecke <vl@samba.org>
+Reviewed-by: Ralph Böhme <slow@samba.org>
+Reviewed-by: Jeremy Allison <jra@samba.org>
+(cherry picked from commit 6ec81ca3c196f3c4659a4e1c473759b393708d12)
+---
+ source3/lib/substitute.c | 7 ++++---
+ 1 file changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/source3/lib/substitute.c b/source3/lib/substitute.c
+index 1f98327..f56e2c4 100644
+--- a/source3/lib/substitute.c
++++ b/source3/lib/substitute.c
+@@ -524,9 +524,10 @@ char *talloc_sub_basic(TALLOC_CTX *mem_ctx,
+ 
+ 				group_name = gidtoname(pass->pw_gid);
+ 				if (is_domain_name) {
+-					p = strchr_m(group_name, *sep);
+-					if (p != NULL) {
+-						group_name = p + 1;
++					char *group_sep;
++					group_sep = strchr_m(group_name, *sep);
++					if (group_sep != NULL) {
++						group_name = group_sep + 1;
+ 					}
+ 				}
+ 				a_string = realloc_string_sub(a_string,
+-- 
+2.10.1
+
