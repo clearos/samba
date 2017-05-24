@@ -6,7 +6,7 @@
 # ctdb is enabled by default, you can disable it with: --without clustering
 %bcond_without clustering
 
-%define main_release 13
+%define main_release 14
 
 %define samba_version 4.4.4
 %define talloc_version 2.1.6
@@ -124,6 +124,7 @@ Patch13:   samba-4.4.x-fix_libads_krb5_memcache.patch
 Patch14:   CVE-2016-2125-v4-4.patch
 Patch15:   CVE-2016-2126-v4-4.patch
 Patch16:   CVE-2017-2619-v4-4.patch
+Patch17:   CVE-2017-7494.patch
 
 BuildRoot:      %(mktemp -ud %{_tmppath}/%{name}-%{version}-%{release}-XXXXXX)
 
@@ -725,6 +726,7 @@ and use CTDB instead.
 %patch14 -p1 -b .CVE-2016-2125-v4-4.patch
 %patch15 -p1 -b .CVE-2016-2126-v4-4.patch
 %patch16 -p1 -b .CVE-2017-2619-v4-4.patch
+%patch17 -p1 -b .CVE-2017-7494.patch
 
 %build
 %global _talloc_lib ,talloc,pytalloc,pytalloc-util
@@ -2033,6 +2035,9 @@ rm -rf %{buildroot}
 %endif # with_clustering_support
 
 %changelog
+* Thu May 18 2017 Guenther Deschner <gdeschner@redhat.com> - 4.4.4-14
+- resolves: #1450784 - Security fix for CVE-2017-7494
+
 * Wed Apr 05 2017 Andreas Schneider <asn@redhat.com> - 4.4.4-13
 - resolves: #1437816 - Fix krb5 memory cache in libads sasl code
 - resolves: #1437741 - Fix CVE-2016-2125, CVE-2016-2126 and CVE-2017-2619
