@@ -1,0 +1,293 @@
+From e73223b0edc62a6e89f68fe5f0a3c56cd14322de Mon Sep 17 00:00:00 2001
+From: Andreas Schneider <asn@samba.org>
+Date: Mon, 13 Mar 2017 17:30:37 +0100
+Subject: [PATCH 1/5] testprogs: Correctly expand shell parameters
+
+The old behaviour is:
+
+  for var in $*
+  do
+    echo "$var"
+  done
+
+And you get this:
+
+$ sh test.sh 1 2 '3 4'
+1
+2
+3
+4
+
+Changing it to:
+
+  for var in "$@"
+  do
+    echo "$var"
+  done
+
+will correctly expand to:
+
+$ sh test.sh 1 2 '3 4'
+1
+2
+3 4
+
+Signed-off-by: Andreas Schneider <asn@samba.org>
+Reviewed-by: Jeremy Allison <jra@samba.org>
+
+Autobuild-User(master): Andreas Schneider <asn@cryptomilk.org>
+Autobuild-Date(master): Wed Mar 15 05:26:17 CET 2017 on sn-devel-144
+
+(cherry picked from commit acad0adc2977ca26df44e5b22d8b8e991177af71)
+---
+ testprogs/blackbox/subunit.sh | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/testprogs/blackbox/subunit.sh b/testprogs/blackbox/subunit.sh
+index 0791d775d27..5c81ce20a11 100755
+--- a/testprogs/blackbox/subunit.sh
++++ b/testprogs/blackbox/subunit.sh
+@@ -78,7 +78,7 @@ subunit_skip_test () {
+ testit () {
+ 	name="$1"
+ 	shift
+-	cmdline="$*"
++	cmdline="$@"
+ 	subunit_start_test "$name"
+ 	output=`$cmdline 2>&1`
+ 	status=$?
+@@ -93,7 +93,7 @@ testit () {
+ testit_expect_failure () {
+ 	name="$1"
+ 	shift
+-	cmdline="$*"
++	cmdline="$@"
+ 	subunit_start_test "$name"
+ 	output=`$cmdline 2>&1`
+ 	status=$?
+-- 
+2.12.0
+
+
+From 7a729d0c4ff2e423bd500f6e0acd91f2ba766b68 Mon Sep 17 00:00:00 2001
+From: Andreas Schneider <asn@samba.org>
+Date: Mon, 13 Mar 2017 16:11:39 +0100
+Subject: [PATCH 2/5] krb5_wrap: Print a warning for an invalid keytab name
+
+Signed-off-by: Andreas Schneider <asn@samba.org>
+Reviewed-by: Andrew Bartlet <abartlet@samba.org>
+(cherry picked from commit a6a527e1e83a979ef035c49a087b5e79599c10a4)
+---
+ lib/krb5_wrap/krb5_samba.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/lib/krb5_wrap/krb5_samba.c b/lib/krb5_wrap/krb5_samba.c
+index 10b42dec53f..fd8e4a96071 100644
+--- a/lib/krb5_wrap/krb5_samba.c
++++ b/lib/krb5_wrap/krb5_samba.c
+@@ -1187,6 +1187,8 @@ krb5_error_code smb_krb5_kt_open(krb5_context context,
+ 		goto open_keytab;
+ 	}
+ 
++	DBG_WARNING("ERROR: Invalid keytab name: %s\n", keytab_name_req);
++
+ 	return KRB5_KT_BADNAME;
+ 
+ open_keytab:
+-- 
+2.12.0
+
+
+From 8efd7f6c759a65ab83d7ec679915ea2a0d3752f3 Mon Sep 17 00:00:00 2001
+From: Andreas Schneider <asn@samba.org>
+Date: Mon, 13 Mar 2017 16:24:52 +0100
+Subject: [PATCH 3/5] s3:libads: Correctly handle the keytab kerberos methods
+
+Signed-off-by: Andreas Schneider <asn@samba.org>
+Reviewed-by: Andrew Bartlet <abartlet@samba.org>
+(cherry picked from commit ca2d8f3161c647c425c8c1eaaac1837c2e97faad)
+---
+ source3/libads/kerberos_keytab.c | 69 +++++++++++++++++++++++++++++++++-------
+ 1 file changed, 57 insertions(+), 12 deletions(-)
+
+diff --git a/source3/libads/kerberos_keytab.c b/source3/libads/kerberos_keytab.c
+index 3c73b089bbb..96df10fcf65 100644
+--- a/source3/libads/kerberos_keytab.c
++++ b/source3/libads/kerberos_keytab.c
+@@ -34,6 +34,57 @@
+ 
+ #ifdef HAVE_ADS
+ 
++/* This MAX_NAME_LEN is a constant defined in krb5.h */
++#ifndef MAX_KEYTAB_NAME_LEN
++#define MAX_KEYTAB_NAME_LEN 1100
++#endif
++
++static krb5_error_code ads_keytab_open(krb5_context context,
++				       krb5_keytab *keytab)
++{
++	char keytab_str[MAX_KEYTAB_NAME_LEN] = {0};
++	const char *keytab_name = NULL;
++	krb5_error_code ret = 0;
++
++	switch (lp_kerberos_method()) {
++	case KERBEROS_VERIFY_SYSTEM_KEYTAB:
++	case KERBEROS_VERIFY_SECRETS_AND_KEYTAB:
++		ret = krb5_kt_default_name(context,
++					   keytab_str,
++					   sizeof(keytab_str) - 2);
++		if (ret != 0) {
++			DBG_WARNING("Failed to get default keytab name");
++			goto out;
++		}
++		keytab_name = keytab_str;
++		break;
++	case KERBEROS_VERIFY_DEDICATED_KEYTAB:
++		keytab_name = lp_dedicated_keytab_file();
++		break;
++	default:
++		DBG_ERR("Invalid kerberos method set (%d)\n",
++			lp_kerberos_method());
++		ret = KRB5_KT_BADNAME;
++		goto out;
++	}
++
++	if (keytab_name == NULL || keytab_name[0] == '\0') {
++		DBG_ERR("Invalid keytab name\n");
++		ret = KRB5_KT_BADNAME;
++		goto out;
++	}
++
++	ret = smb_krb5_kt_open(context, keytab_name, true, keytab);
++	if (ret != 0) {
++		DBG_WARNING("smb_krb5_kt_open failed (%s)\n",
++			    error_message(ret));
++		goto out;
++	}
++
++out:
++	return ret;
++}
++
+ /**********************************************************************
+  Adds a single service principal, i.e. 'host' to the system keytab
+ ***********************************************************************/
+@@ -75,10 +126,8 @@ int ads_keytab_add_entry(ADS_STRUCT *ads, const char *srvPrinc)
+ 		return -1;
+ 	}
+ 
+-	ret = smb_krb5_kt_open(context, NULL, True, &keytab);
+-	if (ret) {
+-		DEBUG(1, ("smb_krb5_kt_open failed (%s)\n",
+-			  error_message(ret)));
++	ret = ads_keytab_open(context, &keytab);
++	if (ret != 0) {
+ 		goto out;
+ 	}
+ 
+@@ -262,10 +311,8 @@ int ads_keytab_flush(ADS_STRUCT *ads)
+ 		return ret;
+ 	}
+ 
+-	ret = smb_krb5_kt_open(context, NULL, True, &keytab);
+-	if (ret) {
+-		DEBUG(1, ("smb_krb5_kt_open failed (%s)\n",
+-			  error_message(ret)));
++	ret = ads_keytab_open(context, &keytab);
++	if (ret != 0) {
+ 		goto out;
+ 	}
+ 
+@@ -447,10 +494,8 @@ int ads_keytab_create_default(ADS_STRUCT *ads)
+ 	DEBUG(3, (__location__ ": Searching for keytab entries to preserve "
+ 		  "and update.\n"));
+ 
+-	ret = smb_krb5_kt_open(context, NULL, True, &keytab);
+-	if (ret) {
+-		DEBUG(1, ("smb_krb5_kt_open failed (%s)\n",
+-			  error_message(ret)));
++	ret = ads_keytab_open(context, &keytab);
++	if (ret != 0) {
+ 		goto done;
+ 	}
+ 
+-- 
+2.12.0
+
+
+From d755048c0797e1c88382d63ae90e6ca0dceebb71 Mon Sep 17 00:00:00 2001
+From: Andreas Schneider <asn@samba.org>
+Date: Mon, 13 Mar 2017 17:28:58 +0100
+Subject: [PATCH 4/5] param: Allow to specify kerberos method on the
+ commandline
+
+We support --option for our tools but you cannot set an option where the
+value of the option includes a space.
+
+Signed-off-by: Andreas Schneider <asn@samba.org>
+Reviewed-by: Andrew Bartlet <abartlet@samba.org>
+(cherry picked from commit 12d26899a45ce5d05ac4279fa5915318daa4f2e0)
+---
+ lib/param/param_table.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/lib/param/param_table.c b/lib/param/param_table.c
+index 4b5234a7c9e..9a944ef19b3 100644
+--- a/lib/param/param_table.c
++++ b/lib/param/param_table.c
+@@ -202,9 +202,13 @@ static const struct enum_list enum_smbd_profiling_level[] = {
+ static const struct enum_list enum_kerberos_method[] = {
+ 	{KERBEROS_VERIFY_SECRETS, "default"},
+ 	{KERBEROS_VERIFY_SECRETS, "secrets only"},
++	{KERBEROS_VERIFY_SECRETS, "secretsonly"},
+ 	{KERBEROS_VERIFY_SYSTEM_KEYTAB, "system keytab"},
++	{KERBEROS_VERIFY_SYSTEM_KEYTAB, "systemkeytab"},
+ 	{KERBEROS_VERIFY_DEDICATED_KEYTAB, "dedicated keytab"},
++	{KERBEROS_VERIFY_DEDICATED_KEYTAB, "dedicatedkeytab"},
+ 	{KERBEROS_VERIFY_SECRETS_AND_KEYTAB, "secrets and keytab"},
++	{KERBEROS_VERIFY_SECRETS_AND_KEYTAB, "secretsandkeytab"},
+ 	{-1, NULL}
+ };
+ 
+-- 
+2.12.0
+
+
+From 1916ab4c51bdde58480259d4b45dbcf9c0c46842 Mon Sep 17 00:00:00 2001
+From: Andreas Schneider <asn@samba.org>
+Date: Mon, 13 Mar 2017 16:34:05 +0100
+Subject: [PATCH 5/5] testprogs: Test 'net ads join' with a dedicated keytab
+
+This checks that a 'net ads join' can create the keytab and make sure we
+will not regress in future.
+
+Signed-off-by: Andreas Schneider <asn@samba.org>
+Reviewed-by: Andrew Bartlet <abartlet@samba.org>
+(cherry picked from commit 00e22fe3f63f986978d946e063e19e615cb00ab3)
+---
+ testprogs/blackbox/test_net_ads.sh | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/testprogs/blackbox/test_net_ads.sh b/testprogs/blackbox/test_net_ads.sh
+index 8e915cdcf1f..99b886f53eb 100755
+--- a/testprogs/blackbox/test_net_ads.sh
++++ b/testprogs/blackbox/test_net_ads.sh
+@@ -35,6 +35,15 @@ testit "testjoin" $VALGRIND $net_tool ads testjoin -kP || failed=`expr $failed +
+ 
+ testit "leave" $VALGRIND $net_tool ads leave -U$DC_USERNAME%$DC_PASSWORD || failed=`expr $failed + 1`
+ 
++# Test with kerberos method = secrets and keytab
++dedicated_keytab_file="$PREFIX_ABS/test_net_ads_dedicated_krb5.keytab"
++testit "join (decicated keytab)" $VALGRIND $net_tool ads join -U$DC_USERNAME%$DC_PASSWORD --option="kerberosmethod=dedicatedkeytab" --option="dedicatedkeytabfile=$dedicated_keytab_file" || failed=`expr $failed + 1`
++
++testit "testjoin (dedicated keytab)" $VALGRIND $net_tool ads testjoin -kP || failed=`expr $failed + 1`
++
++testit "leave (dedicated keytab)" $VALGRIND $net_tool ads leave -U$DC_USERNAME%$DC_PASSWORD || failed=`expr $failed + 1`
++rm -f $dedicated_keytab_file
++
+ testit_expect_failure "testjoin(not joined)" $VALGRIND $net_tool ads testjoin -kP || failed=`expr $failed + 1`
+ 
+ testit "join+kerberos" $VALGRIND $net_tool ads join -kU$DC_USERNAME%$DC_PASSWORD || failed=`expr $failed + 1`
+-- 
+2.12.0
+

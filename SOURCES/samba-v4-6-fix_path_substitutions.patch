@@ -1,0 +1,194 @@
+From d80f5dc85d6fb9ebfef807932bef10e6c0c86468 Mon Sep 17 00:00:00 2001
+From: Volker Lendecke <vl@samba.org>
+Date: Fri, 17 Mar 2017 13:52:57 +0100
+Subject: [PATCH 1/3] s3:winbind: Use the correct talloc context for user
+ information
+
+This fixes the substitution for 'template homedir'.
+
+BUG: https://bugzilla.samba.org/show_bug.cgi?id=12699
+
+Signed-off-by: Volker Lendecke <vl@samba.org>
+Reviewed-by: Andreas Schneider <asn@samba.org>
+
+Autobuild-User(master): Volker Lendecke <vl@samba.org>
+Autobuild-Date(master): Sat Mar 18 19:47:40 CET 2017 on sn-devel-144
+
+(cherry picked from commit ece5e67bbc027432aeb3d97205ef093a0acda8d5)
+---
+ source3/winbindd/wb_queryuser.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/source3/winbindd/wb_queryuser.c b/source3/winbindd/wb_queryuser.c
+index be4d3d3e665..69b4c8dad5a 100644
+--- a/source3/winbindd/wb_queryuser.c
++++ b/source3/winbindd/wb_queryuser.c
+@@ -329,7 +329,7 @@ static void wb_queryuser_got_group_name(struct tevent_req *subreq)
+ 	NTSTATUS status;
+ 	const char *domain_name;
+ 
+-	status = wb_lookupsid_recv(subreq, state, &type, &domain_name,
++	status = wb_lookupsid_recv(subreq, state->info, &type, &domain_name,
+ 				   &state->info->primary_group_name);
+ 	TALLOC_FREE(subreq);
+ 	if (tevent_req_nterror(req, status)) {
+-- 
+2.12.0
+
+
+From 80fddd3572702bd45565fcc53e75d098c4fb0cf3 Mon Sep 17 00:00:00 2001
+From: Andreas Schneider <asn@samba.org>
+Date: Wed, 15 Mar 2017 12:37:08 +0100
+Subject: [PATCH 2/3] s3:tests: Add a subsitution test for %D %u %g
+
+BUG: https://bugzilla.samba.org/show_bug.cgi?id=12699
+
+Signed-off-by: Andreas Schneider <asn@samba.org>
+Reviewed-by: Jeremy Allison <jra@samba.org>
+(cherry picked from commit 2be02fdd1ed1d565e28f50d02ff5216391ac0660)
+---
+ selftest/target/Samba3.pm                  | 19 ++++++++++++++++++-
+ source3/script/tests/test_substitutions.sh |  9 +++++++--
+ 2 files changed, 25 insertions(+), 3 deletions(-)
+
+diff --git a/selftest/target/Samba3.pm b/selftest/target/Samba3.pm
+index f5b2c510224..1e053f12297 100755
+--- a/selftest/target/Samba3.pm
++++ b/selftest/target/Samba3.pm
+@@ -394,16 +394,33 @@ sub setup_admember($$$$)
+ 	$substitution_path = "$share_dir/D_SAMBADOMAIN/U_alice/G_domain users";
+ 	push(@dirs, $substitution_path);
+ 
++	# Using '/' as the winbind separator is a bad idea ...
++	$substitution_path = "$share_dir/D_SAMBADOMAIN/u_SAMBADOMAIN";
++	push(@dirs, $substitution_path);
++
++	$substitution_path = "$share_dir/D_SAMBADOMAIN/u_SAMBADOMAIN/alice";
++	push(@dirs, $substitution_path);
++
++	$substitution_path = "$share_dir/D_SAMBADOMAIN/u_SAMBADOMAIN/alice/g_SAMBADOMAIN";
++	push(@dirs, $substitution_path);
++
++	$substitution_path = "$share_dir/D_SAMBADOMAIN/u_SAMBADOMAIN/alice/g_SAMBADOMAIN/domain users";
++	push(@dirs, $substitution_path);
++
+ 	my $member_options = "
+ 	security = ads
+         workgroup = $dcvars->{DOMAIN}
+         realm = $dcvars->{REALM}
+         netbios aliases = foo bar
+ 
+-[subDUG]
++[sub_dug]
+ 	path = $share_dir/D_%D/U_%U/G_%G
+ 	writeable = yes
+ 
++[sub_dug2]
++	path = $share_dir/D_%D/u_%u/g_%g
++	writeable = yes
++
+ ";
+ 
+ 	my $ret = $self->provision($prefix,
+diff --git a/source3/script/tests/test_substitutions.sh b/source3/script/tests/test_substitutions.sh
+index 0852ad969f0..1a46f11c85d 100755
+--- a/source3/script/tests/test_substitutions.sh
++++ b/source3/script/tests/test_substitutions.sh
+@@ -24,9 +24,14 @@ smbclient="$samba_bindir/smbclient"
+ . $samba_srcdir/testprogs/blackbox/subunit.sh
+ . $samba_srcdir/testprogs/blackbox/common_test_fns.inc
+ 
+-SMB_UNC="//$SERVER/subDUG"
++SMB_UNC="//$SERVER/sub_dug"
+ 
+-test_smbclient "Test login to share with substitution" \
++test_smbclient "Test login to share with substitution (DUG)" \
++	"ls" "$SMB_UNC" "-U$USERNAME%$PASSWORD" || failed=$(expr $failed + 1)
++
++SMB_UNC="//$SERVER/sub_dug2"
++
++test_smbclient "Test login to share with substitution (Dug)" \
+ 	"ls" "$SMB_UNC" "-U$USERNAME%$PASSWORD" || failed=$(expr $failed + 1)
+ 
+ exit $failed
+-- 
+2.12.0
+
+
+From 3868c86ec0800b08c0ef1bf8328b6c1f3cd9437c Mon Sep 17 00:00:00 2001
+From: Andreas Schneider <asn@samba.org>
+Date: Fri, 17 Mar 2017 10:04:19 +0100
+Subject: [PATCH 3/3] selftest: Define template homedir for 'ad_member' env
+
+BUG: https://bugzilla.samba.org/show_bug.cgi?id=12699
+
+With this set, the samba3.local.nss test for ad_member will ensure that
+we correctly substitute those smb.conf options.
+
+Signed-off-by: Andreas Schneider <asn@samba.org>
+Reviewed-by: Jeremy Allison <jra@samba.org>
+
+Autobuild-User(master): Jeremy Allison <jra@samba.org>
+Autobuild-Date(master): Thu Mar 30 04:26:18 CEST 2017 on sn-devel-144
+
+(cherry picked from commit 5f4979509950547e68af7f64ac263d0e0705ee03)
+---
+ nsswitch/tests/test_wbinfo.sh | 17 +++++++++++------
+ selftest/target/Samba3.pm     |  1 +
+ 2 files changed, 12 insertions(+), 6 deletions(-)
+
+diff --git a/nsswitch/tests/test_wbinfo.sh b/nsswitch/tests/test_wbinfo.sh
+index cfe582df068..f9c040e5f43 100755
+--- a/nsswitch/tests/test_wbinfo.sh
++++ b/nsswitch/tests/test_wbinfo.sh
+@@ -205,13 +205,18 @@ subunit_start_test "$test_name"
+ # The full name (GECOS) is based on name (the RDN, in this case CN)
+ # and displayName in winbindd_ads, and is based only on displayName in
+ # winbindd_msrpc and winbindd_rpc.  Allow both versions.
+-expected_line="$DOMAIN/administrator:*:$admin_uid:$gid:Administrator:/home/$DOMAIN/administrator:/bin/false"
+-expected2_line="$DOMAIN/administrator:*:$admin_uid:$gid::/home/$DOMAIN/administrator:/bin/false"
++if test "$TARGET" = "ad_member"; then
++	expected1_line="$DOMAIN/administrator:*:$admin_uid:$gid:Administrator:/home/$DOMAIN/Domain Users/administrator:/bin/false"
++	expected2_line="$DOMAIN/administrator:*:$admin_uid:$gid::/home/$DOMAIN/Domain Users/administrator:/bin/false"
++else
++	expected1_line="$DOMAIN/administrator:*:$admin_uid:$gid:Administrator:/home/$DOMAIN/administrator:/bin/false"
++	expected2_line="$DOMAIN/administrator:*:$admin_uid:$gid::/home/$DOMAIN/administrator:/bin/false"
++fi
+ 
+-if test x$passwd_line = x"$expected_line" -o x$passwd_line = x"$expected2_line"; then
++if test "x$passwd_line" = "x$expected1_line" -o "x$passwd_line" = "x$expected2_line"; then
+ 	subunit_pass_test "$test_name"
+ else
+-	echo "expected '$expected_line' or '$expected2_line' got '$passwd_line'" | subunit_fail_test "$test_name"
++	echo "expected '$expected1_line' or '$expected2_line' got '$passwd_line'" | subunit_fail_test "$test_name"
+ 	failed=`expr $failed + 1`
+ fi
+ 
+@@ -227,10 +232,10 @@ fi
+ 
+ test_name="confirm output of wbinfo --uid-info against $TARGET"
+ subunit_start_test "$test_name"
+-if test x$passwd_line = x"$expected_line" -o x$passwd_line = x"$expected2_line"; then
++if test "x$passwd_line" = "x$expected1_line" -o "x$passwd_line" = "x$expected2_line"; then
+ 	subunit_pass_test "$test_name"
+ else
+-	echo "expected '$expected_line' or '$expected2_line' got '$passwd_line'" | subunit_fail_test "$test_name"
++	echo "expected '$expected1_line' or '$expected2_line' got '$passwd_line'" | subunit_fail_test "$test_name"
+ 	failed=`expr $failed + 1`
+ fi
+ 
+diff --git a/selftest/target/Samba3.pm b/selftest/target/Samba3.pm
+index 1e053f12297..cb4970828a5 100755
+--- a/selftest/target/Samba3.pm
++++ b/selftest/target/Samba3.pm
+@@ -412,6 +412,7 @@ sub setup_admember($$$$)
+         workgroup = $dcvars->{DOMAIN}
+         realm = $dcvars->{REALM}
+         netbios aliases = foo bar
++	template homedir = /home/%D/%G/%U
+ 
+ [sub_dug]
+ 	path = $share_dir/D_%D/U_%U/G_%G
+-- 
+2.12.0
+
