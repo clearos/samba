@@ -1,0 +1,39 @@
+From dc05cb5cd01b3264109ddee8d1bc095cd585e09e Mon Sep 17 00:00:00 2001
+From: Andreas Schneider <asn@samba.org>
+Date: Mon, 20 Mar 2017 16:08:20 +0100
+Subject: [PATCH] s3:libsmb: Only print error message if kerberos use is forced
+
+BUG: https://bugzilla.samba.org/show_bug.cgi?id=12704
+
+Signed-off-by: Andreas Schneider <asn@samba.org>
+Reviewed-by: Ralph Boehme <slow@samba.org>
+---
+ source3/libsmb/cliconnect.c | 12 +++++++++---
+ 1 file changed, 9 insertions(+), 3 deletions(-)
+
+diff --git a/source3/libsmb/cliconnect.c b/source3/libsmb/cliconnect.c
+index 029c3d4760e..93f873079db 100644
+--- a/source3/libsmb/cliconnect.c
++++ b/source3/libsmb/cliconnect.c
+@@ -349,9 +349,15 @@ NTSTATUS cli_session_creds_prepare_krb5(struct cli_state *cli,
+ 				0 /* no time correction for now */,
+ 				NULL);
+ 	if (ret != 0) {
+-		DEBUG(0, ("Kinit for %s to access %s failed: %s\n",
+-			  user_principal, target_hostname,
+-			  error_message(ret)));
++		int dbglvl = DBGLVL_WARNING;
++
++		if (krb5_state == CRED_MUST_USE_KERBEROS) {
++			dbglvl = DBGLVL_ERR;
++		}
++
++		DEBUG(dbglvl, ("Kinit for %s to access %s failed: %s\n",
++			       user_principal, target_hostname,
++			       error_message(ret)));
+ 		if (krb5_state == CRED_MUST_USE_KERBEROS) {
+ 			TALLOC_FREE(frame);
+ 			return krb5_to_nt_status(ret);
+-- 
+2.12.0
+

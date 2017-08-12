@@ -1,0 +1,162 @@
+From 7417ea49cc998d07e0208736269b40f8ac3f2c48 Mon Sep 17 00:00:00 2001
+From: Andreas Schneider <asn@samba.org>
+Date: Mon, 19 Jun 2017 14:50:33 +0200
+Subject: [PATCH 1/2] s3:popt_common: Reparse the username in
+ popt_common_credentials_post()
+
+When we parse the username in the options handling, the smb.conf file
+has not been loaded yet. So we are not aware of a 'winbind separator'
+set in the config file.
+
+We need to read and set the username again in the post-processing of the
+credentials.
+
+https://bugzilla.samba.org/show_bug.cgi?id=12849
+
+Signed-off-by: Andreas Schneider <asn@samba.org>
+Reviewed-by: Stefan Metzmacher <metze@samba.org>
+(cherry picked from commit 0caf40ec0196de0de016fda0d4aff0734d498d2b)
+---
+ source3/lib/popt_common.c | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/source3/lib/popt_common.c b/source3/lib/popt_common.c
+index 3589a4fbd2b..9928c708e89 100644
+--- a/source3/lib/popt_common.c
++++ b/source3/lib/popt_common.c
+@@ -238,6 +238,7 @@ void popt_common_credentials_set_delay_post(void)
+ void popt_common_credentials_post(void)
+ {
+ 	struct user_auth_info *auth_info = cmdline_auth_info;
++	const char *username = NULL;
+ 
+ 	if (get_cmdline_auth_info_use_machine_account(auth_info) &&
+ 	    !set_cmdline_auth_info_machine_account_creds(auth_info))
+@@ -248,6 +249,20 @@ void popt_common_credentials_post(void)
+ 	}
+ 
+ 	set_cmdline_auth_info_getpass(auth_info);
++
++	/*
++	 * When we set the username during the handling of the options passed to
++	 * the binary we haven't loaded the config yet. This means that we
++	 * didnn't take the 'winbind separator' into account.
++	 *
++	 * The username might contain the domain name and thus it hasn't been
++	 * correctly parsed yet. If we have a username we need to set it again
++	 * to run the string parser for the username correctly.
++	 */
++	username = get_cmdline_auth_info_username(auth_info);
++	if (username != NULL && username[0] != '\0') {
++		set_cmdline_auth_info_username(auth_info, username);
++	}
+ }
+ 
+ static void popt_common_credentials_callback(poptContext con,
+-- 
+2.13.1
+
+
+From 5143e70481e5b47f37a2eb16a8b74bf74d8ec639 Mon Sep 17 00:00:00 2001
+From: Andreas Schneider <asn@samba.org>
+Date: Mon, 19 Jun 2017 15:52:23 +0200
+Subject: [PATCH 2/2] s3:tests: Add test for smbclient -UDOMAIN+username
+
+BUG: https://bugzilla.samba.org/show_bug.cgi?id=12849
+
+Signed-off-by: Andreas Schneider <asn@samba.org>
+Reviewed-by: Stefan Metzmacher <metze@samba.org>
+
+Autobuild-User(master): Andreas Schneider <asn@cryptomilk.org>
+Autobuild-Date(master): Tue Jun 20 14:48:33 CEST 2017 on sn-devel-144
+
+(cherry picked from commit e60aeb6f56a26019788442247361ed516bf965af)
+---
+ source3/script/tests/test_smbclient_basic.sh | 62 ++++++++++++++++++++++++++++
+ source3/selftest/tests.py                    |  1 +
+ 2 files changed, 63 insertions(+)
+ create mode 100755 source3/script/tests/test_smbclient_basic.sh
+
+diff --git a/source3/script/tests/test_smbclient_basic.sh b/source3/script/tests/test_smbclient_basic.sh
+new file mode 100755
+index 00000000000..90e579b68e9
+--- /dev/null
++++ b/source3/script/tests/test_smbclient_basic.sh
+@@ -0,0 +1,62 @@
++#!/bin/sh
++
++# this runs the file serving tests that are expected to pass with samba3 against shares with various options
++
++if [ $# -lt 5 ]; then
++cat <<EOF
++Usage: test_smbclient_basic.sh SERVER SERVER_IP DOMAIN USERNAME PASSWORD SMBCLIENT <smbclient arguments>
++EOF
++exit 1;
++fi
++
++SERVER="$1"
++SERVER_IP="$2"
++USERNAME="$3"
++PASSWORD="$4"
++smbclient="$5"
++CONFIGURATION="$6"
++shift 6
++ADDARGS="$@"
++
++incdir=`dirname $0`/../../../testprogs/blackbox
++. $incdir/subunit.sh
++
++test_smbclient() {
++	name="$1"
++	cmd="$2"
++	shift
++	shift
++	echo "test: $name"
++	$VALGRIND $smbclient $CONFIGURATION //$SERVER/tmp -c "$cmd" $@
++	status=$?
++	if [ x$status = x0 ]; then
++		echo "success: $name"
++	else
++		echo "failure: $name"
++	fi
++	return $status
++}
++
++# TEST using \ as the separator (default)
++test_smbclient "smbclient as $DOMAIN\\$USERNAME" 'ls' -U$DOMAIN\\$USERNAME%$PASSWORD $CONFIGURATION || failed=`expr $failed + 1`
++# TEST using / as the separator (default)
++test_smbclient "smbclient as $DOMAIN/$USERNAME" 'ls' -U$DOMAIN/$USERNAME%$PASSWORD $CONFIGURATION || failed=`expr $failed + 1`
++
++# TEST using 'winbind separator = +'
++test_smbclient "smbclient as $DOMAIN+$USERNAME" 'ls' -U$DOMAIN+$USERNAME%$PASSWORD $CONFIGURATION --option=winbindseparator=+ || failed=`expr $failed + 1`
++
++# TEST using 'winbind separator = +' set in a config file
++smbclient_config="$PREFIX/tmpsmbconf"
++cat > $smbclient_config <<EOF
++[global]
++    include = $(echo $CONFIGURATION | cut -d= -f2)
++    winbind separator = +
++EOF
++
++SAVE_CONFIGURATION="$CONFIGURATION"
++CONFIGURATION="--configfile=$smbclient_config"
++test_smbclient "smbclient as $DOMAIN+$USERNAME" 'ls' -U$DOMAIN+$USERNAME%$PASSWORD || failed=`expr $failed + 1`
++CONFIGURATION="$SAVE_CONFIGURATION"
++rm -rf $smbclient_config
++
++exit $failed
+diff --git a/source3/selftest/tests.py b/source3/selftest/tests.py
+index dfe7866b283..d3cb071b903 100755
+--- a/source3/selftest/tests.py
++++ b/source3/selftest/tests.py
+@@ -152,6 +152,7 @@ plantestsuite("samba.vfstest.xattr-tdb-1", "nt4_dc:local", [os.path.join(samba3s
+ plantestsuite("samba.vfstest.acl", "nt4_dc:local", [os.path.join(samba3srcdir, "script/tests/vfstest-acl/run.sh"), binpath("vfstest"), "$PREFIX", configuration])
+ plantestsuite("samba.vfstest.catia", "nt4_dc:local", [os.path.join(samba3srcdir, "script/tests/vfstest-catia/run.sh"), binpath("vfstest"), "$PREFIX", configuration])
+ 
++plantestsuite("samba3.blackbox.smbclient_basic", "ad_member", [os.path.join(samba3srcdir, "script/tests/test_smbclient_basic.sh"), '$SERVER', '$SERVER_IP', '$DC_USERNAME', '$DC_PASSWORD', smbclient3, configuration])
+ for options in ["", "--option=clientntlmv2auth=no", "--option=clientusespnego=no", "--option=clientusespnego=no --option=clientntlmv2auth=no", "--option=clientntlmv2auth=no --option=clientlanmanauth=yes --max-protocol=LANMAN2", "--option=clientntlmv2auth=no --option=clientlanmanauth=yes --option=clientmaxprotocol=NT1"]:
+     env = "nt4_dc"
+     plantestsuite("samba3.blackbox.smbclient_auth.plain (%s) %s" % (env, options), env, [os.path.join(samba3srcdir, "script/tests/test_smbclient_auth.sh"), '$SERVER', '$SERVER_IP', '$DC_USERNAME', '$DC_PASSWORD', smbclient3, configuration, options])
+-- 
+2.13.1
+

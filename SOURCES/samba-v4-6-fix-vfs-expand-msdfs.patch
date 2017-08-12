@@ -1,0 +1,211 @@
+From be3f182c7bda75d531fa60c6d08a734f0098f2cc Mon Sep 17 00:00:00 2001
+From: Andreas Schneider <asn@samba.org>
+Date: Tue, 14 Mar 2017 16:12:20 +0100
+Subject: [PATCH] s3:vfs_expand_msdfs: Do not open the remote address as a file
+
+The arguments get passed in the wrong order to read_target_host().
+
+BUG: https://bugzilla.samba.org/show_bug.cgi?id=12687
+
+Signed-off-by: Andreas Schneider <asn@samba.org>
+(cherry picked from commit 1115f152de9ec25bc9e5e499874b4a7c92c888c0)
+---
+ source3/modules/vfs_expand_msdfs.c | 3 +--
+ 1 file changed, 1 insertion(+), 2 deletions(-)
+
+diff --git a/source3/modules/vfs_expand_msdfs.c b/source3/modules/vfs_expand_msdfs.c
+index ffbfa333bad..e42d0098b32 100644
+--- a/source3/modules/vfs_expand_msdfs.c
++++ b/source3/modules/vfs_expand_msdfs.c
+@@ -147,8 +147,7 @@ static char *expand_msdfs_target(TALLOC_CTX *ctx,
+ 		return NULL;
+ 	}
+ 
+-	targethost = read_target_host(
+-		ctx, raddr, mapfilename);
++	targethost = read_target_host(ctx, mapfilename, raddr);
+ 	if (targethost == NULL) {
+ 		DEBUG(1, ("Could not expand target host from file %s\n",
+ 			  mapfilename));
+-- 
+2.12.0
+
+From cf65cc80e8598beef855678118c7c603d4b5729e Mon Sep 17 00:00:00 2001
+From: Andreas Schneider <asn@samba.org>
+Date: Tue, 21 Mar 2017 15:32:37 +0100
+Subject: [PATCH 1/2] s3:smbd: Pass down remote and local address to
+ get_referred_path()
+
+BUG: https://bugzilla.samba.org/show_bug.cgi?id=12687
+
+Pair-Programmed-With: Ralph Boehme <slow@samba.org>
+
+Signed-off-by: Andreas Schneider <asn@samba.org>
+Signed-off-by: Ralph Boehme <slow@samba.org>
+Reviewed-by: Jeremy Allison <jra@samba.org>
+(cherry picked from commit cbf67123e037207662ec0d4e53c55990e21b157e)
+---
+ source3/modules/vfs_default.c       |  2 ++
+ source3/rpc_server/dfs/srv_dfs_nt.c |  6 ++++++
+ source3/smbd/msdfs.c                | 12 +++++++-----
+ source3/smbd/proto.h                | 12 +++++++-----
+ 4 files changed, 22 insertions(+), 10 deletions(-)
+
+diff --git a/source3/modules/vfs_default.c b/source3/modules/vfs_default.c
+index e0b6125f7d8..dcae861103d 100644
+--- a/source3/modules/vfs_default.c
++++ b/source3/modules/vfs_default.c
+@@ -216,6 +216,8 @@ static NTSTATUS vfswrap_get_dfs_referrals(struct vfs_handle_struct *handle,
+ 
+ 	/* The following call can change cwd. */
+ 	status = get_referred_path(r, pathnamep,
++				   handle->conn->sconn->remote_address,
++				   handle->conn->sconn->local_address,
+ 				   !handle->conn->sconn->using_smb2,
+ 				   junction, &consumedcnt, &self_referral);
+ 	if (!NT_STATUS_IS_OK(status)) {
+diff --git a/source3/rpc_server/dfs/srv_dfs_nt.c b/source3/rpc_server/dfs/srv_dfs_nt.c
+index ab2af53c0ba..0a4d6d31b7c 100644
+--- a/source3/rpc_server/dfs/srv_dfs_nt.c
++++ b/source3/rpc_server/dfs/srv_dfs_nt.c
+@@ -76,6 +76,8 @@ WERROR _dfs_Add(struct pipes_struct *p, struct dfs_Add *r)
+ 
+ 	/* The following call can change the cwd. */
+ 	status = get_referred_path(ctx, r->in.path,
++				   p->remote_address,
++				   p->local_address,
+ 				   true, /*allow_broken_path */
+ 				   jn, &consumedcnt, &self_ref);
+ 	if(!NT_STATUS_IS_OK(status)) {
+@@ -146,6 +148,8 @@ WERROR _dfs_Remove(struct pipes_struct *p, struct dfs_Remove *r)
+ 	}
+ 
+ 	status = get_referred_path(ctx, r->in.dfs_entry_path,
++				   p->remote_address,
++				   p->local_address,
+ 				   true, /*allow_broken_path */
+ 				   jn, &consumedcnt, &self_ref);
+ 	if(!NT_STATUS_IS_OK(status)) {
+@@ -374,6 +378,8 @@ WERROR _dfs_GetInfo(struct pipes_struct *p, struct dfs_GetInfo *r)
+ 
+ 	/* The following call can change the cwd. */
+ 	status = get_referred_path(ctx, r->in.dfs_entry_path,
++				   p->remote_address,
++				   p->local_address,
+ 				   true, /*allow_broken_path */
+ 				   jn, &consumedcnt, &self_ref);
+ 	if(!NT_STATUS_IS_OK(status) ||
+diff --git a/source3/smbd/msdfs.c b/source3/smbd/msdfs.c
+index 61538cec832..3cf82d3b430 100644
+--- a/source3/smbd/msdfs.c
++++ b/source3/smbd/msdfs.c
+@@ -953,11 +953,13 @@ static NTSTATUS self_ref(TALLOC_CTX *ctx,
+ **********************************************************************/
+ 
+ NTSTATUS get_referred_path(TALLOC_CTX *ctx,
+-			const char *dfs_path,
+-			bool allow_broken_path,
+-			struct junction_map *jucn,
+-			int *consumedcntp,
+-			bool *self_referralp)
++			   const char *dfs_path,
++			   const struct tsocket_address *remote_address,
++			   const struct tsocket_address *local_address,
++			   bool allow_broken_path,
++			   struct junction_map *jucn,
++			   int *consumedcntp,
++			   bool *self_referralp)
+ {
+ 	struct connection_struct *conn;
+ 	char *targetpath = NULL;
+diff --git a/source3/smbd/proto.h b/source3/smbd/proto.h
+index c1b8201b472..e64457cf9e0 100644
+--- a/source3/smbd/proto.h
++++ b/source3/smbd/proto.h
+@@ -473,11 +473,13 @@ bool is_msdfs_link(connection_struct *conn,
+ 		SMB_STRUCT_STAT *sbufp);
+ struct junction_map;
+ NTSTATUS get_referred_path(TALLOC_CTX *ctx,
+-			const char *dfs_path,
+-			bool allow_broken_path,
+-			struct junction_map *jucn,
+-			int *consumedcntp,
+-			bool *self_referralp);
++			   const char *dfs_path,
++			   const struct tsocket_address *remote_address,
++			   const struct tsocket_address *local_address,
++			   bool allow_broken_path,
++			   struct junction_map *jucn,
++			   int *consumedcntp,
++			   bool *self_referralp);
+ int setup_dfs_referral(connection_struct *orig_conn,
+ 			const char *dfs_path,
+ 			int max_referral_level,
+-- 
+2.13.0
+
+
+From 8f748924275fa8cb3951c296ad4ba5ca5989ac41 Mon Sep 17 00:00:00 2001
+From: Andreas Schneider <asn@samba.org>
+Date: Tue, 21 Mar 2017 15:45:34 +0100
+Subject: [PATCH 2/2] s3:smbd: Set up local and remote address for fake
+ connection
+
+BUG: https://bugzilla.samba.org/show_bug.cgi?id=12687
+
+Pair-Programmed-With: Ralph Boehme <slow@samba.org>
+
+Signed-off-by: Andreas Schneider <asn@samba.org>
+Signed-off-by: Ralph Boehme <slow@samba.org>
+Reviewed-by: Jeremy Allison <jra@samba.org>
+
+(cherry picked from commit e530e43d67436881fd039877f956f0ad9b562af9)
+---
+ source3/smbd/msdfs.c | 24 ++++++++++++++++++++++++
+ 1 file changed, 24 insertions(+)
+
+diff --git a/source3/smbd/msdfs.c b/source3/smbd/msdfs.c
+index 3cf82d3b430..c25fb17cee8 100644
+--- a/source3/smbd/msdfs.c
++++ b/source3/smbd/msdfs.c
+@@ -31,6 +31,7 @@
+ #include "lib/param/loadparm.h"
+ #include "libcli/security/security.h"
+ #include "librpc/gen_ndr/ndr_dfsblobs.h"
++#include "lib/tsocket/tsocket.h"
+ 
+ /**********************************************************************
+  Parse a DFS pathname of the form \hostname\service\reqpath
+@@ -1071,6 +1072,29 @@ NTSTATUS get_referred_path(TALLOC_CTX *ctx,
+ 		return status;
+ 	}
+ 
++	/*
++	 * TODO
++	 *
++	 * The remote and local address should be passed down to
++	 * create_conn_struct_cwd.
++	 */
++	if (conn->sconn->remote_address == NULL) {
++		conn->sconn->remote_address =
++			tsocket_address_copy(remote_address, conn->sconn);
++		if (conn->sconn->remote_address == NULL) {
++			TALLOC_FREE(pdp);
++			return NT_STATUS_NO_MEMORY;
++		}
++	}
++	if (conn->sconn->local_address == NULL) {
++		conn->sconn->local_address =
++			tsocket_address_copy(local_address, conn->sconn);
++		if (conn->sconn->local_address == NULL) {
++			TALLOC_FREE(pdp);
++			return NT_STATUS_NO_MEMORY;
++		}
++	}
++
+ 	/* If this is a DFS path dfs_lookup should return
+ 	 * NT_STATUS_PATH_NOT_COVERED. */
+ 
+-- 
+2.13.0
+
