@@ -1,0 +1,1731 @@
+From 76aae7405595ca76bc0419a97f4a69e0ed528b32 Mon Sep 17 00:00:00 2001
+From: Stefan Metzmacher <metze@samba.org>
+Date: Thu, 29 Dec 2016 14:00:36 +0100
+Subject: [PATCH 01/20] s4:gensec_gssapi: the value
+ gensec_get_target_principal() should overwrite gensec_get_target_hostname()
+
+If gensec_get_target_principal() has a value, we no longer have to verify
+the gensec_get_target_hostname() value, it can be just an ipadress.
+
+Signed-off-by: Stefan Metzmacher <metze@samba.org>
+Reviewed-by: Andreas Schneider <asn@samba.org>
+(cherry picked from commit 48bcca566ebb3a5385b15b0525d7fbdd06361e04)
+---
+ source4/auth/gensec/gensec_gssapi.c | 24 ++++++++++++++++++------
+ 1 file changed, 18 insertions(+), 6 deletions(-)
+
+diff --git a/source4/auth/gensec/gensec_gssapi.c b/source4/auth/gensec/gensec_gssapi.c
+index a6c4019aa6f..3974c3d42a0 100644
+--- a/source4/auth/gensec/gensec_gssapi.c
++++ b/source4/auth/gensec/gensec_gssapi.c
+@@ -307,7 +307,15 @@ static NTSTATUS gensec_gssapi_client_start(struct gensec_security *gensec_securi
+ 	gss_buffer_desc name_token;
+ 	gss_OID name_type;
+ 	OM_uint32 maj_stat, min_stat;
++	const char *target_principal = NULL;
+ 	const char *hostname = gensec_get_target_hostname(gensec_security);
++	const char *service = gensec_get_target_service(gensec_security);
++	const char *realm = cli_credentials_get_realm(creds);
++
++	target_principal = gensec_get_target_principal(gensec_security);
++	if (target_principal != NULL) {
++		goto do_start;
++	}
+ 
+ 	if (!hostname) {
+ 		DEBUG(3, ("No hostname for target computer passed in, cannot use kerberos for this connection\n"));
+@@ -322,6 +330,8 @@ static NTSTATUS gensec_gssapi_client_start(struct gensec_security *gensec_securi
+ 		return NT_STATUS_INVALID_PARAMETER;
+ 	}
+ 
++do_start:
++
+ 	nt_status = gensec_gssapi_start(gensec_security);
+ 	if (!NT_STATUS_IS_OK(nt_status)) {
+ 		return nt_status;
+@@ -333,16 +343,18 @@ static NTSTATUS gensec_gssapi_client_start(struct gensec_security *gensec_securi
+ 		gensec_gssapi_state->gss_want_flags &= ~(GSS_C_DELEG_FLAG|GSS_C_DELEG_POLICY_FLAG);
+ 	}
+ 
+-	gensec_gssapi_state->target_principal = gensec_get_target_principal(gensec_security);
+-	if (gensec_gssapi_state->target_principal) {
++	if (target_principal != NULL) {
+ 		name_type = GSS_C_NULL_OID;
+ 	} else {
+-		gensec_gssapi_state->target_principal = talloc_asprintf(gensec_gssapi_state, "%s/%s@%s",
+-					    gensec_get_target_service(gensec_security), 
+-					    hostname, cli_credentials_get_realm(creds));
+-
++		target_principal = talloc_asprintf(gensec_gssapi_state,
++					"%s/%s@%s", service, hostname, realm);
++		if (target_principal == NULL) {
++			return NT_STATUS_NO_MEMORY;
++		}
+ 		name_type = GSS_C_NT_USER_NAME;
+ 	}
++	gensec_gssapi_state->target_principal = target_principal;
++
+ 	name_token.value  = discard_const_p(uint8_t, gensec_gssapi_state->target_principal);
+ 	name_token.length = strlen(gensec_gssapi_state->target_principal);
+ 
+-- 
+2.12.0
+
+
+From 12d74cd165db3603ba2f3a58343e9a82fb22ee93 Mon Sep 17 00:00:00 2001
+From: Stefan Metzmacher <metze@samba.org>
+Date: Thu, 29 Dec 2016 15:20:00 +0100
+Subject: [PATCH 02/20] s4:gensec_gssapi: require a realm in
+ gensec_gssapi_client_start()
+
+Signed-off-by: Stefan Metzmacher <metze@samba.org>
+Reviewed-by: Andreas Schneider <asn@samba.org>
+(cherry picked from commit 3a870baee8d9dbe5359f04a108814afc27e57d46)
+---
+ source4/auth/gensec/gensec_gssapi.c | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/source4/auth/gensec/gensec_gssapi.c b/source4/auth/gensec/gensec_gssapi.c
+index 3974c3d42a0..957cfa4229d 100644
+--- a/source4/auth/gensec/gensec_gssapi.c
++++ b/source4/auth/gensec/gensec_gssapi.c
+@@ -330,6 +330,16 @@ static NTSTATUS gensec_gssapi_client_start(struct gensec_security *gensec_securi
+ 		return NT_STATUS_INVALID_PARAMETER;
+ 	}
+ 
++	if (realm == NULL) {
++		const char *cred_name = cli_credentials_get_unparsed_name(creds,
++									  gensec_security);
++		DEBUG(3, ("cli_credentials(%s) without realm, "
++			  "cannot use kerberos for this connection %s/%s\n",
++			  cred_name, service, hostname));
++		talloc_free(discard_const_p(char, cred_name));
++		return NT_STATUS_INVALID_PARAMETER;
++	}
++
+ do_start:
+ 
+ 	nt_status = gensec_gssapi_start(gensec_security);
+-- 
+2.12.0
+
+
+From beb9e4379333872ff1e5a3422ba70ccb409e9915 Mon Sep 17 00:00:00 2001
+From: Andreas Schneider <asn@samba.org>
+Date: Mon, 6 Mar 2017 09:13:09 +0100
+Subject: [PATCH 03/20] testprogs: Use smbclient by default in
+ test_kinit_trusts
+
+This is the tool we use by default and we should test with it.
+
+BUG: https://bugzilla.samba.org/show_bug.cgi?id=12554
+
+Signed-off-by: Andreas Schneider <asn@samba.org>
+Reviewed-by: Stefan Metzmacher <metze@samba.org>
+(cherry picked from commit 9b3ff90dbc5cc1017dfc89831a1081272e6c2356)
+---
+ testprogs/blackbox/test_kinit_trusts_heimdal.sh | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/testprogs/blackbox/test_kinit_trusts_heimdal.sh b/testprogs/blackbox/test_kinit_trusts_heimdal.sh
+index 073e0e7517e..040bf919203 100755
+--- a/testprogs/blackbox/test_kinit_trusts_heimdal.sh
++++ b/testprogs/blackbox/test_kinit_trusts_heimdal.sh
+@@ -32,7 +32,7 @@ if test -x $samba4bindir/samba4kinit; then
+ 	samba4kinit=$samba4bindir/samba4kinit
+ fi
+ 
+-smbclient="$samba4bindir/smbclient4"
++smbclient="$samba4bindir/smbclient"
+ wbinfo="$samba4bindir/wbinfo"
+ rpcclient="$samba4bindir/rpcclient"
+ samba_tool="$samba4bindir/samba-tool"
+-- 
+2.12.0
+
+
+From 7feebdec869ed633bea612630ebca8d9b85a3e2e Mon Sep 17 00:00:00 2001
+From: Andreas Schneider <asn@samba.org>
+Date: Mon, 6 Mar 2017 09:15:45 +0100
+Subject: [PATCH 04/20] testprogs: Add kinit_trusts tests with smbclient4
+
+BUG: https://bugzilla.samba.org/show_bug.cgi?id=12554
+
+Signed-off-by: Andreas Schneider <asn@samba.org>
+Reviewed-by: Stefan Metzmacher <metze@samba.org>
+(cherry picked from commit 42bd003f468ab95b6ac97c774e2cd217d06c05ed)
+---
+ testprogs/blackbox/test_kinit_trusts_heimdal.sh | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/testprogs/blackbox/test_kinit_trusts_heimdal.sh b/testprogs/blackbox/test_kinit_trusts_heimdal.sh
+index 040bf919203..e67f77361a4 100755
+--- a/testprogs/blackbox/test_kinit_trusts_heimdal.sh
++++ b/testprogs/blackbox/test_kinit_trusts_heimdal.sh
+@@ -52,8 +52,16 @@ rm -rf $KRB5CCNAME_PATH
+ echo $TRUST_PASSWORD > $PREFIX/tmppassfile
+ testit "kinit with password" $samba4kinit $enctype --password-file=$PREFIX/tmppassfile --request-pac $TRUST_USERNAME@$TRUST_REALM   || failed=`expr $failed + 1`
+ test_smbclient "Test login with user kerberos ccache" 'ls' "$unc" -k yes || failed=`expr $failed + 1`
++rm -rf $KRB5CCNAME_PATH
++
++# Test with smbclient4
++smbclient="$samba4bindir/smbclient4"
++testit "kinit with password" $samba4kinit $enctype --password-file=$PREFIX/tmppassfile --request-pac $TRUST_USERNAME@$TRUST_REALM   || failed=`expr $failed + 1`
++test_smbclient "Test login with user kerberos ccache (smbclient4)" 'ls' "$unc" -k yes || failed=`expr $failed + 1`
++rm -rf $KRB5CCNAME_PATH
+ 
+ testit "kinit with password (enterprise style)" $samba4kinit $enctype --enterprise --password-file=$PREFIX/tmppassfile --request-pac $TRUST_USERNAME@$TRUST_REALM   || failed=`expr $failed + 1`
++smbclient="$samba4bindir/smbclient"
+ test_smbclient "Test login with user kerberos ccache" 'ls' "$unc" -k yes || failed=`expr $failed + 1`
+ 
+ if test x"${TYPE}" = x"forest" ;then
+-- 
+2.12.0
+
+
+From cae7475df03e7d464dc8642a7a02dad388215d1e Mon Sep 17 00:00:00 2001
+From: Andreas Schneider <asn@samba.org>
+Date: Wed, 8 Mar 2017 10:40:08 +0100
+Subject: [PATCH 05/20] krb5_wrap: Do not return an empty realm from
+ smb_krb5_get_realm_from_hostname()
+
+BUG: https://bugzilla.samba.org/show_bug.cgi?id=12554
+
+Pair-Programmed-With: Stefan Metzmacher <metze@samba.org>
+
+Signed-off-by: Andreas Schneider <asn@samba.org>
+Signed-off-by: Stefan Metzmacher <metze@samba.org>
+(cherry picked from commit 946f9dd1170be63b91e31ce825ea123f3c07329b)
+---
+ lib/krb5_wrap/krb5_samba.c | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/lib/krb5_wrap/krb5_samba.c b/lib/krb5_wrap/krb5_samba.c
+index 10b42dec53f..9dc7304d566 100644
+--- a/lib/krb5_wrap/krb5_samba.c
++++ b/lib/krb5_wrap/krb5_samba.c
+@@ -2691,7 +2691,9 @@ static char *smb_krb5_get_realm_from_hostname(TALLOC_CTX *mem_ctx,
+ 		goto out;
+ 	}
+ 
+-	if (realm_list && realm_list[0]) {
++	if (realm_list != NULL &&
++	    realm_list[0] != NULL &&
++	    realm_list[0][0] != '\0') {
+ 		realm = talloc_strdup(mem_ctx, realm_list[0]);
+ 	}
+ 
+-- 
+2.12.0
+
+
+From 1d2b4a00e2a1213df81192e01f2d833ed4a6ec54 Mon Sep 17 00:00:00 2001
+From: Andreas Schneider <asn@samba.org>
+Date: Wed, 8 Mar 2017 10:48:52 +0100
+Subject: [PATCH 06/20] krb5_wrap: Try to guess the correct realm from the
+ service hostname
+
+If we do not get a realm mapping from the krb5.conf or from the Kerberos
+library try to guess it from the service hostname. The guessing of the
+realm from the service hostname is already implemented in Heimdal. This
+makes the behavior of smb_krb5_get_realm_from_hostname() consistent
+with both MIT and Heimdal.
+
+BUG: https://bugzilla.samba.org/show_bug.cgi?id=12554
+
+Pair-Programmed-With: Stefan Metzmacher <metze@samba.org>
+
+Signed-off-by: Andreas Schneider <asn@samba.org>
+Signed-off-by: Stefan Metzmacher <metze@samba.org>
+(cherry picked from commit 65228925ab3c4da4ae299f77cae219fc7d37cc68)
+---
+ lib/krb5_wrap/krb5_samba.c | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/lib/krb5_wrap/krb5_samba.c b/lib/krb5_wrap/krb5_samba.c
+index 9dc7304d566..f8ef9f1df0f 100644
+--- a/lib/krb5_wrap/krb5_samba.c
++++ b/lib/krb5_wrap/krb5_samba.c
+@@ -2695,6 +2695,19 @@ static char *smb_krb5_get_realm_from_hostname(TALLOC_CTX *mem_ctx,
+ 	    realm_list[0] != NULL &&
+ 	    realm_list[0][0] != '\0') {
+ 		realm = talloc_strdup(mem_ctx, realm_list[0]);
++	} else {
++		const char *p = NULL;
++
++		/*
++		 * "dc6.samba2003.example.com"
++		 * returns a realm of "SAMBA2003.EXAMPLE.COM"
++		 *
++		 * "dc6." returns realm as NULL
++		 */
++		p = strchr_m(hostname, '.');
++		if (p != NULL && p[1] != '\0') {
++			realm = talloc_strdup_upper(mem_ctx, p + 1);
++		}
+ 	}
+ 
+   out:
+-- 
+2.12.0
+
+
+From 0e99683587c9047055ca6432fae0a11604710b69 Mon Sep 17 00:00:00 2001
+From: Andreas Schneider <asn@samba.org>
+Date: Wed, 8 Mar 2017 11:56:30 +0100
+Subject: [PATCH 07/20] krb5_wrap: pass client_realm to
+ smb_krb5_get_realm_from_hostname()
+
+BUG: https://bugzilla.samba.org/show_bug.cgi?id=12554
+
+Pair-Programmed-With: Stefan Metzmacher <metze@samba.org>
+
+Signed-off-by: Andreas Schneider <asn@samba.org>
+Signed-off-by: Stefan Metzmacher <metze@samba.org>
+(cherry picked from commit f0c4fcace586197d5c170f6a9dcc175df23e3802)
+---
+ lib/krb5_wrap/krb5_samba.c | 16 ++++++++++++++--
+ 1 file changed, 14 insertions(+), 2 deletions(-)
+
+diff --git a/lib/krb5_wrap/krb5_samba.c b/lib/krb5_wrap/krb5_samba.c
+index f8ef9f1df0f..36bcc65e22a 100644
+--- a/lib/krb5_wrap/krb5_samba.c
++++ b/lib/krb5_wrap/krb5_samba.c
+@@ -2664,7 +2664,8 @@ static char *smb_krb5_get_default_realm_from_ccache(TALLOC_CTX *mem_ctx)
+ ************************************************************************/
+ 
+ static char *smb_krb5_get_realm_from_hostname(TALLOC_CTX *mem_ctx,
+-						const char *hostname)
++						const char *hostname,
++						const char *client_realm)
+ {
+ #if defined(HAVE_KRB5_REALM_TYPE)
+ 	/* Heimdal. */
+@@ -2695,6 +2696,9 @@ static char *smb_krb5_get_realm_from_hostname(TALLOC_CTX *mem_ctx,
+ 	    realm_list[0] != NULL &&
+ 	    realm_list[0][0] != '\0') {
+ 		realm = talloc_strdup(mem_ctx, realm_list[0]);
++		if (realm == NULL) {
++			goto out;
++		}
+ 	} else {
+ 		const char *p = NULL;
+ 
+@@ -2707,9 +2711,16 @@ static char *smb_krb5_get_realm_from_hostname(TALLOC_CTX *mem_ctx,
+ 		p = strchr_m(hostname, '.');
+ 		if (p != NULL && p[1] != '\0') {
+ 			realm = talloc_strdup_upper(mem_ctx, p + 1);
++			if (realm == NULL) {
++				goto out;
++			}
+ 		}
+ 	}
+ 
++	if (realm == NULL) {
++		realm = talloc_strdup(mem_ctx, client_realm);
++	}
++
+   out:
+ 
+ 	if (ctx) {
+@@ -2752,7 +2763,8 @@ char *smb_krb5_get_principal_from_service_hostname(TALLOC_CTX *mem_ctx,
+ 	if (host) {
+ 		/* DNS name. */
+ 		realm = smb_krb5_get_realm_from_hostname(talloc_tos(),
+-							 remote_name);
++							 remote_name,
++							 default_realm);
+ 	} else {
+ 		/* NetBIOS name - use our realm. */
+ 		realm = smb_krb5_get_default_realm_from_ccache(talloc_tos());
+-- 
+2.12.0
+
+
+From 6876b0d12f8aad4448f4a7d770db7ff129df6c50 Mon Sep 17 00:00:00 2001
+From: Andreas Schneider <asn@samba.org>
+Date: Wed, 8 Mar 2017 11:56:30 +0100
+Subject: [PATCH 08/20] krb5_wrap: Make smb_krb5_get_realm_from_hostname()
+ public
+
+BUG: https://bugzilla.samba.org/show_bug.cgi?id=12554
+
+Pair-Programmed-With: Stefan Metzmacher <metze@samba.org>
+
+Signed-off-by: Andreas Schneider <asn@samba.org>
+Signed-off-by: Stefan Metzmacher <metze@samba.org>
+(cherry picked from commit 339a2ecb3f05d0c9e860a5dd59b8bdbc51d4ffa7)
+---
+ lib/krb5_wrap/krb5_samba.c | 28 +++++++++++++++++++++-------
+ lib/krb5_wrap/krb5_samba.h |  4 ++++
+ 2 files changed, 25 insertions(+), 7 deletions(-)
+
+diff --git a/lib/krb5_wrap/krb5_samba.c b/lib/krb5_wrap/krb5_samba.c
+index 36bcc65e22a..2b0ec6bfa0e 100644
+--- a/lib/krb5_wrap/krb5_samba.c
++++ b/lib/krb5_wrap/krb5_samba.c
+@@ -2659,13 +2659,27 @@ static char *smb_krb5_get_default_realm_from_ccache(TALLOC_CTX *mem_ctx)
+ 	return realm;
+ }
+ 
+-/************************************************************************
+- Routine to get the realm from a given DNS name.
+-************************************************************************/
+-
+-static char *smb_krb5_get_realm_from_hostname(TALLOC_CTX *mem_ctx,
+-						const char *hostname,
+-						const char *client_realm)
++/**
++ * @brief Get the realm from the service hostname.
++ *
++ * This function will look for a domain realm mapping in the [domain_realm]
++ * section of the krb5.conf first and fallback to extract the realm from
++ * the provided service hostname. As a last resort it will return the
++ * provided client_realm.
++ *
++ * @param[in]  mem_ctx     The talloc context
++ *
++ * @param[in]  hostname    The service hostname
++ *
++ * @param[in]  client_realm  If we can not find a mapping, fall back to
++ *                           this realm.
++ *
++ * @return The realm to use for the service hostname, NULL if a fatal error
++ *         occured.
++ */
++char *smb_krb5_get_realm_from_hostname(TALLOC_CTX *mem_ctx,
++				       const char *hostname,
++				       const char *client_realm)
+ {
+ #if defined(HAVE_KRB5_REALM_TYPE)
+ 	/* Heimdal. */
+diff --git a/lib/krb5_wrap/krb5_samba.h b/lib/krb5_wrap/krb5_samba.h
+index 71e81ea26e1..accae449a0e 100644
+--- a/lib/krb5_wrap/krb5_samba.h
++++ b/lib/krb5_wrap/krb5_samba.h
+@@ -314,6 +314,10 @@ krb5_error_code smb_krb5_principal_set_realm(krb5_context context,
+ 					     krb5_principal principal,
+ 					     const char *realm);
+ 
++char *smb_krb5_get_realm_from_hostname(TALLOC_CTX *mem_ctx,
++				       const char *hostname,
++				       const char *client_realm);
++
+ char *smb_krb5_get_principal_from_service_hostname(TALLOC_CTX *mem_ctx,
+ 						   const char *service,
+ 						   const char *remote_name,
+-- 
+2.12.0
+
+
+From 08a81c315129c3d07637a8a5064b4ef988864efd Mon Sep 17 00:00:00 2001
+From: Andreas Schneider <asn@samba.org>
+Date: Mon, 6 Mar 2017 09:19:13 +0100
+Subject: [PATCH 09/20] s4:gensec-gssapi: Create a helper function to setup
+ server_principal
+
+BUG: https://bugzilla.samba.org/show_bug.cgi?id=12554
+
+Pair-Programmed-With: Stefan Metzmacher <metze@samba.org>
+
+Signed-off-by: Andreas Schneider <asn@samba.org>
+Signed-off-by: Stefan Metzmacher <metze@samba.org>
+(cherry picked from commit 8f7c4529420316b553c80cd3d19b6996525b029a)
+---
+ source4/auth/gensec/gensec_gssapi.c | 88 +++++++++++++++++++++++++------------
+ source4/auth/gensec/gensec_gssapi.h |  2 +-
+ 2 files changed, 61 insertions(+), 29 deletions(-)
+
+diff --git a/source4/auth/gensec/gensec_gssapi.c b/source4/auth/gensec/gensec_gssapi.c
+index 957cfa4229d..ec57d193714 100644
+--- a/source4/auth/gensec/gensec_gssapi.c
++++ b/source4/auth/gensec/gensec_gssapi.c
+@@ -83,6 +83,56 @@ static int gensec_gssapi_destructor(struct gensec_gssapi_state *gensec_gssapi_st
+ 	return 0;
+ }
+ 
++static NTSTATUS gensec_gssapi_setup_server_principal(TALLOC_CTX *mem_ctx,
++						     const char *target_principal,
++						     const char *service,
++						     const char *hostname,
++						     const char *realm,
++						     const gss_OID mech,
++						     char **pserver_principal,
++						     gss_name_t *pserver_name)
++{
++	char *server_principal = NULL;
++	gss_buffer_desc name_token;
++	gss_OID name_type;
++	OM_uint32 maj_stat, min_stat = 0;
++
++	if (target_principal != NULL) {
++		server_principal = talloc_strdup(mem_ctx, target_principal);
++		name_type = GSS_C_NULL_OID;
++	} else {
++		server_principal = talloc_asprintf(mem_ctx,
++						   "%s/%s@%s",
++						   service, hostname, realm);
++		name_type = GSS_C_NT_USER_NAME;
++	}
++	if (server_principal == NULL) {
++		return NT_STATUS_NO_MEMORY;
++	}
++
++	name_token.value = (uint8_t *)server_principal;
++	name_token.length = strlen(server_principal);
++
++	maj_stat = gss_import_name(&min_stat,
++				   &name_token,
++				   name_type,
++				   pserver_name);
++	if (maj_stat) {
++		DBG_WARNING("GSS Import name of %s failed: %s\n",
++			    server_principal,
++			    gssapi_error_string(mem_ctx,
++						maj_stat,
++						min_stat,
++						mech));
++		TALLOC_FREE(server_principal);
++		return NT_STATUS_INVALID_PARAMETER;
++	}
++
++	*pserver_principal = server_principal;
++
++	return NT_STATUS_OK;
++}
++
+ static NTSTATUS gensec_gssapi_start(struct gensec_security *gensec_security)
+ {
+ 	struct gensec_gssapi_state *gensec_gssapi_state;
+@@ -304,9 +354,6 @@ static NTSTATUS gensec_gssapi_client_start(struct gensec_security *gensec_securi
+ 	struct gensec_gssapi_state *gensec_gssapi_state;
+ 	struct cli_credentials *creds = gensec_get_credentials(gensec_security);
+ 	NTSTATUS nt_status;
+-	gss_buffer_desc name_token;
+-	gss_OID name_type;
+-	OM_uint32 maj_stat, min_stat;
+ 	const char *target_principal = NULL;
+ 	const char *hostname = gensec_get_target_hostname(gensec_security);
+ 	const char *service = gensec_get_target_service(gensec_security);
+@@ -353,31 +400,16 @@ do_start:
+ 		gensec_gssapi_state->gss_want_flags &= ~(GSS_C_DELEG_FLAG|GSS_C_DELEG_POLICY_FLAG);
+ 	}
+ 
+-	if (target_principal != NULL) {
+-		name_type = GSS_C_NULL_OID;
+-	} else {
+-		target_principal = talloc_asprintf(gensec_gssapi_state,
+-					"%s/%s@%s", service, hostname, realm);
+-		if (target_principal == NULL) {
+-			return NT_STATUS_NO_MEMORY;
+-		}
+-		name_type = GSS_C_NT_USER_NAME;
+-	}
+-	gensec_gssapi_state->target_principal = target_principal;
+-
+-	name_token.value  = discard_const_p(uint8_t, gensec_gssapi_state->target_principal);
+-	name_token.length = strlen(gensec_gssapi_state->target_principal);
+-
+-
+-	maj_stat = gss_import_name (&min_stat,
+-				    &name_token,
+-				    name_type,
+-				    &gensec_gssapi_state->server_name);
+-	if (maj_stat) {
+-		DEBUG(2, ("GSS Import name of %s failed: %s\n",
+-			  (char *)name_token.value,
+-			  gssapi_error_string(gensec_gssapi_state, maj_stat, min_stat, gensec_gssapi_state->gss_oid)));
+-		return NT_STATUS_INVALID_PARAMETER;
++	nt_status = gensec_gssapi_setup_server_principal(gensec_gssapi_state,
++							 target_principal,
++							 service,
++							 hostname,
++							 realm,
++							 gensec_gssapi_state->gss_oid,
++							 &gensec_gssapi_state->target_principal,
++							 &gensec_gssapi_state->server_name);
++	if (!NT_STATUS_IS_OK(nt_status)) {
++		return nt_status;
+ 	}
+ 
+ 	return NT_STATUS_OK;
+diff --git a/source4/auth/gensec/gensec_gssapi.h b/source4/auth/gensec/gensec_gssapi.h
+index cf0e3a8d914..d788b5ebc38 100644
+--- a/source4/auth/gensec/gensec_gssapi.h
++++ b/source4/auth/gensec/gensec_gssapi.h
+@@ -65,5 +65,5 @@ struct gensec_gssapi_state {
+ 	int gss_exchange_count;
+ 	size_t sig_size;
+ 
+-	const char *target_principal;
++	char *target_principal;
+ };
+-- 
+2.12.0
+
+
+From 78a76c53e9b0e7caf67a43eeb7929a4fe94fa25e Mon Sep 17 00:00:00 2001
+From: Andreas Schneider <asn@samba.org>
+Date: Wed, 8 Mar 2017 12:34:59 +0100
+Subject: [PATCH 10/20] s4:gensec_gssapi: Move setup of service_principal to
+ update function
+
+BUG: https://bugzilla.samba.org/show_bug.cgi?id=12554
+
+Pair-Programmed-With: Stefan Metzmacher <metze@samba.org>
+
+Signed-off-by: Andreas Schneider <asn@samba.org>
+Signed-off-by: Stefan Metzmacher <metze@samba.org>
+(cherry picked from commit bf6358bf035e7ad48bd15cc2164afab2a19e7ad6)
+---
+ source4/auth/gensec/gensec_gssapi.c | 33 ++++++++++++++++++++-------------
+ 1 file changed, 20 insertions(+), 13 deletions(-)
+
+diff --git a/source4/auth/gensec/gensec_gssapi.c b/source4/auth/gensec/gensec_gssapi.c
+index ec57d193714..6cb4431e0d9 100644
+--- a/source4/auth/gensec/gensec_gssapi.c
++++ b/source4/auth/gensec/gensec_gssapi.c
+@@ -400,18 +400,6 @@ do_start:
+ 		gensec_gssapi_state->gss_want_flags &= ~(GSS_C_DELEG_FLAG|GSS_C_DELEG_POLICY_FLAG);
+ 	}
+ 
+-	nt_status = gensec_gssapi_setup_server_principal(gensec_gssapi_state,
+-							 target_principal,
+-							 service,
+-							 hostname,
+-							 realm,
+-							 gensec_gssapi_state->gss_oid,
+-							 &gensec_gssapi_state->target_principal,
+-							 &gensec_gssapi_state->server_name);
+-	if (!NT_STATUS_IS_OK(nt_status)) {
+-		return nt_status;
+-	}
+-
+ 	return NT_STATUS_OK;
+ }
+ 
+@@ -452,7 +440,11 @@ static NTSTATUS gensec_gssapi_update(struct gensec_security *gensec_security,
+ 	OM_uint32 min_stat2;
+ 	gss_buffer_desc input_token = { 0, NULL };
+ 	gss_buffer_desc output_token = { 0, NULL };
+-
++	struct cli_credentials *cli_creds = gensec_get_credentials(gensec_security);
++	const char *target_principal = gensec_get_target_principal(gensec_security);
++	const char *hostname = gensec_get_target_hostname(gensec_security);
++	const char *service = gensec_get_target_service(gensec_security);
++	const char *client_realm = cli_credentials_get_realm(cli_creds);
+ 	gss_OID gss_oid_p = NULL;
+ 	OM_uint32 time_req = 0;
+ 	OM_uint32 time_rec = 0;
+@@ -491,6 +483,21 @@ static NTSTATUS gensec_gssapi_update(struct gensec_security *gensec_security,
+ 				return NT_STATUS_INTERNAL_ERROR;
+ 			}
+ #endif
++
++			if (gensec_gssapi_state->server_name == NULL) {
++				nt_status = gensec_gssapi_setup_server_principal(gensec_gssapi_state,
++										 target_principal,
++										 service,
++										 hostname,
++										 client_realm,
++										 gensec_gssapi_state->gss_oid,
++										 &gensec_gssapi_state->target_principal,
++										 &gensec_gssapi_state->server_name);
++				if (!NT_STATUS_IS_OK(nt_status)) {
++					return nt_status;
++				}
++			}
++
+ 			maj_stat = gss_init_sec_context(&min_stat, 
+ 							gensec_gssapi_state->client_cred->creds,
+ 							&gensec_gssapi_state->gssapi_context, 
+-- 
+2.12.0
+
+
+From 7541d4a3c1a665925c8d3aa97963729874c70761 Mon Sep 17 00:00:00 2001
+From: Andreas Schneider <asn@samba.org>
+Date: Wed, 8 Mar 2017 11:03:17 +0100
+Subject: [PATCH 11/20] s4:gensec_gssapi: Use
+ smb_krb5_get_realm_from_hostname()
+
+With credentials for administrator@FOREST1.EXAMPLE.COM
+this patch changes the target_principal for
+the ldap service of host dc2.forest2.example.com
+from
+
+  ldap/dc2.forest2.example.com@FOREST1.EXAMPLE.COM
+
+to
+
+  ldap/dc2.forest2.example.com@FOREST2.EXAMPLE.COM
+
+Typically ldap/dc2.forest2.example.com@FOREST1.EXAMPLE.COM
+should be used in order to allow the KDC of FOREST1.EXAMPLE.COM
+to generate a referral ticket for
+krbtgt/FOREST2.EXAMPLE.COM@FOREST1.EXAMPLE.COM.
+
+The problem is that KDCs only return such referral tickets
+if there's a forest trust between FOREST1.EXAMPLE.COM
+and FOREST2.EXAMPLE.COM. If there's only an external domain
+trust between FOREST1.EXAMPLE.COM and FOREST2.EXAMPLE.COM
+the KDC of FOREST1.EXAMPLE.COM will respond with S_PRINCIPAL_UNKNOWN
+when being asked for ldap/dc2.forest2.example.com@FOREST1.EXAMPLE.COM.
+
+In the case of an external trust the client can still ask
+explicitly for krbtgt/FOREST2.EXAMPLE.COM@FOREST1.EXAMPLE.COM
+and the KDC of FOREST1.EXAMPLE.COM will generate it.
+
+From there the client can use the
+krbtgt/FOREST2.EXAMPLE.COM@FOREST1.EXAMPLE.COM
+ticket and ask a KDC of FOREST2.EXAMPLE.COM for a
+service ticket for ldap/dc2.forest2.example.com@FOREST2.EXAMPLE.COM.
+
+With Heimdal we'll get the fallback on S_PRINCIPAL_UNKNOWN behavior
+when we pass ldap/dc2.forest2.example.com@FOREST2.EXAMPLE.COM as
+target principal. As _krb5_get_cred_kdc_any() first calls
+get_cred_kdc_referral() (which always starts with the client realm)
+and falls back to get_cred_kdc_capath() (which starts with the given realm).
+
+MIT krb5 only tries the given realm of the target principal,
+if we want to autodetect support for transitive forest trusts,
+we'll have to do the fallback ourself.
+
+BUG: https://bugzilla.samba.org/show_bug.cgi?id=12554
+
+Pair-Programmed-With: Stefan Metzmacher <metze@samba.org>
+
+Signed-off-by: Andreas Schneider <asn@samba.org>
+Signed-off-by: Stefan Metzmacher <metze@samba.org>
+(cherry picked from commit 3781eb250173981a8890b82d1ff9358f144034cd)
+---
+ source4/auth/gensec/gensec_gssapi.c | 62 ++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 61 insertions(+), 1 deletion(-)
+
+diff --git a/source4/auth/gensec/gensec_gssapi.c b/source4/auth/gensec/gensec_gssapi.c
+index 6cb4431e0d9..57392a04e60 100644
+--- a/source4/auth/gensec/gensec_gssapi.c
++++ b/source4/auth/gensec/gensec_gssapi.c
+@@ -445,6 +445,7 @@ static NTSTATUS gensec_gssapi_update(struct gensec_security *gensec_security,
+ 	const char *hostname = gensec_get_target_hostname(gensec_security);
+ 	const char *service = gensec_get_target_service(gensec_security);
+ 	const char *client_realm = cli_credentials_get_realm(cli_creds);
++	const char *server_realm = NULL;
+ 	gss_OID gss_oid_p = NULL;
+ 	OM_uint32 time_req = 0;
+ 	OM_uint32 time_rec = 0;
+@@ -484,12 +485,71 @@ static NTSTATUS gensec_gssapi_update(struct gensec_security *gensec_security,
+ 			}
+ #endif
+ 
++			/*
++			 * With credentials for
++			 * administrator@FOREST1.EXAMPLE.COM this patch changes
++			 * the target_principal for the ldap service of host
++			 * dc2.forest2.example.com from
++			 *
++			 *   ldap/dc2.forest2.example.com@FOREST1.EXAMPLE.COM
++			 *
++			 * to
++			 *
++			 *   ldap/dc2.forest2.example.com@FOREST2.EXAMPLE.COM
++			 *
++			 * Typically
++			 * ldap/dc2.forest2.example.com@FOREST1.EXAMPLE.COM
++			 * should be used in order to allow the KDC of
++			 * FOREST1.EXAMPLE.COM to generate a referral ticket
++			 * for krbtgt/FOREST2.EXAMPLE.COM@FOREST1.EXAMPLE.COM.
++			 *
++			 * The problem is that KDCs only return such referral
++			 * tickets if there's a forest trust between
++			 * FOREST1.EXAMPLE.COM and FOREST2.EXAMPLE.COM. If
++			 * there's only an external domain trust between
++			 * FOREST1.EXAMPLE.COM and FOREST2.EXAMPLE.COM the KDC
++			 * of FOREST1.EXAMPLE.COM will respond with
++			 * S_PRINCIPAL_UNKNOWN when being asked for
++			 * ldap/dc2.forest2.example.com@FOREST1.EXAMPLE.COM.
++			 *
++			 * In the case of an external trust the client can
++			 * still ask explicitly for
++			 * krbtgt/FOREST2.EXAMPLE.COM@FOREST1.EXAMPLE.COM and
++			 * the KDC of FOREST1.EXAMPLE.COM will generate it.
++			 *
++			 * From there the client can use the
++			 * krbtgt/FOREST2.EXAMPLE.COM@FOREST1.EXAMPLE.COM
++			 * ticket and ask a KDC of FOREST2.EXAMPLE.COM for a
++			 * service ticket for
++			 * ldap/dc2.forest2.example.com@FOREST2.EXAMPLE.COM.
++			 *
++			 * With Heimdal we'll get the fallback on
++			 * S_PRINCIPAL_UNKNOWN behavior when we pass
++			 * ldap/dc2.forest2.example.com@FOREST2.EXAMPLE.COM as
++			 * target principal. As _krb5_get_cred_kdc_any() first
++			 * calls get_cred_kdc_referral() (which always starts
++			 * with the client realm) and falls back to
++			 * get_cred_kdc_capath() (which starts with the given
++			 * realm).
++			 *
++			 * MIT krb5 only tries the given realm of the target
++			 * principal, if we want to autodetect support for
++			 * transitive forest trusts, would have to do the
++			 * fallback ourself.
++			 */
+ 			if (gensec_gssapi_state->server_name == NULL) {
++				server_realm = smb_krb5_get_realm_from_hostname(gensec_gssapi_state,
++										hostname,
++										client_realm);
++				if (server_realm == NULL) {
++					return NT_STATUS_NO_MEMORY;
++				}
++
+ 				nt_status = gensec_gssapi_setup_server_principal(gensec_gssapi_state,
+ 										 target_principal,
+ 										 service,
+ 										 hostname,
+-										 client_realm,
++										 server_realm,
+ 										 gensec_gssapi_state->gss_oid,
+ 										 &gensec_gssapi_state->target_principal,
+ 										 &gensec_gssapi_state->server_name);
+-- 
+2.12.0
+
+
+From 97935a1164d328b466bc305c37869e78d306173a Mon Sep 17 00:00:00 2001
+From: Andreas Schneider <asn@samba.org>
+Date: Wed, 8 Mar 2017 13:10:05 +0100
+Subject: [PATCH 12/20] s4:gensec_gssapi: Correctly handle external trusts with
+ MIT
+
+BUG: https://bugzilla.samba.org/show_bug.cgi?id=12554
+
+Pair-Programmed-With: Stefan Metzmacher <metze@samba.org>
+
+Signed-off-by: Andreas Schneider <asn@samba.org>
+Signed-off-by: Stefan Metzmacher <metze@samba.org>
+(cherry picked from commit 2dd4887648bf006a577e03fc027e881738ca04ab)
+---
+ source4/auth/gensec/gensec_gssapi.c | 51 +++++++++++++++++++++++++++++++++++++
+ 1 file changed, 51 insertions(+)
+
+diff --git a/source4/auth/gensec/gensec_gssapi.c b/source4/auth/gensec/gensec_gssapi.c
+index 57392a04e60..61911aae9d9 100644
+--- a/source4/auth/gensec/gensec_gssapi.c
++++ b/source4/auth/gensec/gensec_gssapi.c
+@@ -464,6 +464,7 @@ static NTSTATUS gensec_gssapi_update(struct gensec_security *gensec_security,
+ 		switch (gensec_security->gensec_role) {
+ 		case GENSEC_CLIENT:
+ 		{
++			bool fallback = false;
+ #ifdef SAMBA4_USES_HEIMDAL
+ 			struct gsskrb5_send_to_kdc send_to_kdc;
+ 			krb5_error_code ret;
+@@ -537,6 +538,48 @@ static NTSTATUS gensec_gssapi_update(struct gensec_security *gensec_security,
+ 			 * transitive forest trusts, would have to do the
+ 			 * fallback ourself.
+ 			 */
++#ifndef SAMBA4_USES_HEIMDAL
++			if (gensec_gssapi_state->server_name == NULL) {
++				nt_status = gensec_gssapi_setup_server_principal(gensec_gssapi_state,
++										 target_principal,
++										 service,
++										 hostname,
++										 client_realm,
++										 gensec_gssapi_state->gss_oid,
++										 &gensec_gssapi_state->target_principal,
++										 &gensec_gssapi_state->server_name);
++				if (!NT_STATUS_IS_OK(nt_status)) {
++					return nt_status;
++				}
++
++				maj_stat = gss_init_sec_context(&min_stat,
++								gensec_gssapi_state->client_cred->creds,
++								&gensec_gssapi_state->gssapi_context,
++								gensec_gssapi_state->server_name,
++								gensec_gssapi_state->gss_oid,
++								gensec_gssapi_state->gss_want_flags,
++								time_req,
++								gensec_gssapi_state->input_chan_bindings,
++								&input_token,
++								&gss_oid_p,
++								&output_token,
++								&gensec_gssapi_state->gss_got_flags, /* ret flags */
++								&time_rec);
++				if (maj_stat != GSS_S_FAILURE) {
++					goto init_sec_context_done;
++				}
++				if (min_stat != (OM_uint32)KRB5KDC_ERR_S_PRINCIPAL_UNKNOWN) {
++					goto init_sec_context_done;
++				}
++				if (target_principal != NULL) {
++					goto init_sec_context_done;
++				}
++
++				fallback = true;
++				TALLOC_FREE(gensec_gssapi_state->target_principal);
++				gss_release_name(&min_stat2, &gensec_gssapi_state->server_name);
++			}
++#endif /* !SAMBA4_USES_HEIMDAL */
+ 			if (gensec_gssapi_state->server_name == NULL) {
+ 				server_realm = smb_krb5_get_realm_from_hostname(gensec_gssapi_state,
+ 										hostname,
+@@ -545,6 +588,11 @@ static NTSTATUS gensec_gssapi_update(struct gensec_security *gensec_security,
+ 					return NT_STATUS_NO_MEMORY;
+ 				}
+ 
++				if (fallback &&
++				    strequal(client_realm, server_realm)) {
++					goto init_sec_context_done;
++				}
++
+ 				nt_status = gensec_gssapi_setup_server_principal(gensec_gssapi_state,
+ 										 target_principal,
+ 										 service,
+@@ -571,6 +619,9 @@ static NTSTATUS gensec_gssapi_update(struct gensec_security *gensec_security,
+ 							&output_token, 
+ 							&gensec_gssapi_state->gss_got_flags, /* ret flags */
+ 							&time_rec);
++			goto init_sec_context_done;
++			/* JUMP! */
++init_sec_context_done:
+ 			if (gss_oid_p) {
+ 				gensec_gssapi_state->gss_oid = gss_oid_p;
+ 			}
+-- 
+2.12.0
+
+
+From 71a49b84ebb8d45d91d21ebf92d3c7302b24f490 Mon Sep 17 00:00:00 2001
+From: Andreas Schneider <asn@samba.org>
+Date: Thu, 9 Mar 2017 07:54:29 +0100
+Subject: [PATCH 13/20] s3:gse: Use smb_krb5_get_realm_from_hostname()
+
+With credentials for administrator@FOREST1.EXAMPLE.COM
+this patch changes the target_principal for
+the ldap service of host dc2.forest2.example.com
+from
+
+  ldap/dc2.forest2.example.com@FOREST1.EXAMPLE.COM
+
+to
+
+  ldap/dc2.forest2.example.com@FOREST2.EXAMPLE.COM
+
+Typically ldap/dc2.forest2.example.com@FOREST1.EXAMPLE.COM
+should be used in order to allow the KDC of FOREST1.EXAMPLE.COM
+to generate a referral ticket for
+krbtgt/FOREST2.EXAMPLE.COM@FOREST1.EXAMPLE.COM.
+
+The problem is that KDCs only return such referral tickets
+if there's a forest trust between FOREST1.EXAMPLE.COM
+and FOREST2.EXAMPLE.COM. If there's only an external domain
+trust between FOREST1.EXAMPLE.COM and FOREST2.EXAMPLE.COM
+the KDC of FOREST1.EXAMPLE.COM will respond with S_PRINCIPAL_UNKNOWN
+when being asked for ldap/dc2.forest2.example.com@FOREST1.EXAMPLE.COM.
+
+In the case of an external trust the client can still ask
+explicitly for krbtgt/FOREST2.EXAMPLE.COM@FOREST1.EXAMPLE.COM
+and the KDC of FOREST1.EXAMPLE.COM will generate it.
+
+From there the client can use the
+krbtgt/FOREST2.EXAMPLE.COM@FOREST1.EXAMPLE.COM
+ticket and ask a KDC of FOREST2.EXAMPLE.COM for a
+service ticket for ldap/dc2.forest2.example.com@FOREST2.EXAMPLE.COM.
+
+With Heimdal we'll get the fallback on S_PRINCIPAL_UNKNOWN behavior
+when we pass ldap/dc2.forest2.example.com@FOREST2.EXAMPLE.COM as
+target principal. As _krb5_get_cred_kdc_any() first calls
+get_cred_kdc_referral() (which always starts with the client realm)
+and falls back to get_cred_kdc_capath() (which starts with the given realm).
+
+MIT krb5 only tries the given realm of the target principal,
+if we want to autodetect support for transitive forest trusts,
+we'll have to do the fallback ourself.
+
+BUG: https://bugzilla.samba.org/show_bug.cgi?id=12554
+
+Pair-Programmed-With: Stefan Metzmacher <metze@samba.org>
+
+Signed-off-by: Andreas Schneider <asn@samba.org>
+Signed-off-by: Stefan Metzmacher <metze@samba.org>
+(cherry picked from commit a3d95ed9037fb8b14a451da02dcadf011485ae34)
+---
+ source3/librpc/crypto/gse.c | 93 +++++++++++++++++++++++++++++++++------------
+ 1 file changed, 68 insertions(+), 25 deletions(-)
+
+diff --git a/source3/librpc/crypto/gse.c b/source3/librpc/crypto/gse.c
+index abf20bc7dfd..57632f6cc8f 100644
+--- a/source3/librpc/crypto/gse.c
++++ b/source3/librpc/crypto/gse.c
+@@ -120,6 +120,54 @@ static int gse_context_destructor(void *ptr)
+ 	return 0;
+ }
+ 
++static NTSTATUS gse_setup_server_principal(TALLOC_CTX *mem_ctx,
++					   const char *target_principal,
++					   const char *service,
++					   const char *hostname,
++					   const char *realm,
++					   char **pserver_principal,
++					   gss_name_t *pserver_name)
++{
++	char *server_principal = NULL;
++	gss_buffer_desc name_token;
++	gss_OID name_type;
++	OM_uint32 maj_stat, min_stat = 0;
++
++	if (target_principal != NULL) {
++		server_principal = talloc_strdup(mem_ctx, target_principal);
++		name_type = GSS_C_NULL_OID;
++	} else {
++		server_principal = talloc_asprintf(mem_ctx,
++						   "%s/%s@%s",
++						   service,
++						   hostname,
++						   realm);
++		name_type = GSS_C_NT_USER_NAME;
++	}
++	if (server_principal == NULL) {
++		return NT_STATUS_NO_MEMORY;
++	}
++
++	name_token.value = (uint8_t *)server_principal;
++	name_token.length = strlen(server_principal);
++
++	maj_stat = gss_import_name(&min_stat,
++				   &name_token,
++				   name_type,
++				   pserver_name);
++	if (maj_stat) {
++		DBG_WARNING("GSS Import name of %s failed: %s\n",
++			    server_principal,
++			    gse_errstr(mem_ctx, maj_stat, min_stat));
++		TALLOC_FREE(server_principal);
++		return NT_STATUS_INVALID_PARAMETER;
++	}
++
++	*pserver_principal = server_principal;
++
++	return NT_STATUS_OK;
++}
++
+ static NTSTATUS gse_context_init(TALLOC_CTX *mem_ctx,
+ 				 bool do_sign, bool do_seal,
+ 				 const char *ccache_name,
+@@ -203,11 +251,12 @@ static NTSTATUS gse_init_client(TALLOC_CTX *mem_ctx,
+ {
+ 	struct gse_context *gse_ctx;
+ 	OM_uint32 gss_maj, gss_min;
+-	gss_buffer_desc name_buffer = GSS_C_EMPTY_BUFFER;
+ #ifdef HAVE_GSS_KRB5_CRED_NO_CI_FLAGS_X
+ 	gss_buffer_desc empty_buffer = GSS_C_EMPTY_BUFFER;
+ 	gss_OID oid = discard_const(GSS_KRB5_CRED_NO_CI_FLAGS_X);
+ #endif
++	char *server_principal = NULL;
++	char *server_realm = NULL;
+ 	NTSTATUS status;
+ 
+ 	if (!server || !service) {
+@@ -223,30 +272,24 @@ static NTSTATUS gse_init_client(TALLOC_CTX *mem_ctx,
+ 
+ 	/* Guess the realm based on the supplied service, and avoid the GSS libs
+ 	   doing DNS lookups which may fail.
+-
+-	   TODO: Loop with the KDC on some more combinations (local
+-	   realm in particular), possibly falling back to
+-	   GSS_C_NT_HOSTBASED_SERVICE
+ 	*/
+-	name_buffer.value =
+-		smb_krb5_get_principal_from_service_hostname(gse_ctx,
+-							     service,
+-							     server,
+-							     realm);
+-	if (!name_buffer.value) {
+-		status = NT_STATUS_NO_MEMORY;
+-		goto err_out;
++	server_realm = smb_krb5_get_realm_from_hostname(mem_ctx,
++							server,
++							realm);
++	if (server_realm == NULL) {
++		return NT_STATUS_NO_MEMORY;
+ 	}
+-	name_buffer.length = strlen((char *)name_buffer.value);
+-	gss_maj = gss_import_name(&gss_min, &name_buffer,
+-				  GSS_C_NT_USER_NAME,
+-				  &gse_ctx->server_name);
+-	if (gss_maj) {
+-		DEBUG(5, ("gss_import_name failed for %s, with [%s]\n",
+-			  (char *)name_buffer.value,
+-			  gse_errstr(gse_ctx, gss_maj, gss_min)));
+-		status = NT_STATUS_INTERNAL_ERROR;
+-		goto err_out;
++
++	status = gse_setup_server_principal(mem_ctx,
++					    NULL,
++					    service,
++					    server,
++					    server_realm,
++					    &server_principal,
++					    &gse_ctx->server_name);
++	TALLOC_FREE(server_realm);
++	if (!NT_STATUS_IS_OK(status)) {
++		return status;
+ 	}
+ 
+ 	/* TODO: get krb5 ticket using username/password, if no valid
+@@ -299,11 +342,11 @@ static NTSTATUS gse_init_client(TALLOC_CTX *mem_ctx,
+ #endif
+ 
+ 	*_gse_ctx = gse_ctx;
+-	TALLOC_FREE(name_buffer.value);
++	TALLOC_FREE(server_principal);
+ 	return NT_STATUS_OK;
+ 
+ err_out:
+-	TALLOC_FREE(name_buffer.value);
++	TALLOC_FREE(server_principal);
+ 	TALLOC_FREE(gse_ctx);
+ 	return status;
+ }
+-- 
+2.12.0
+
+
+From 905cdd3ee1fea0bf0e2081da4489934944c55fa9 Mon Sep 17 00:00:00 2001
+From: Andreas Schneider <asn@samba.org>
+Date: Thu, 9 Mar 2017 09:10:12 +0100
+Subject: [PATCH 14/20] krb5_wrap: Remove obsolete
+ smb_krb5_get_principal_from_service_hostname()
+
+BUG: https://bugzilla.samba.org/show_bug.cgi?id=12554
+
+Signed-off-by: Andreas Schneider <asn@samba.org>
+Reviewed-by: Stefan Metzmacher <metze@samba.org>
+(cherry picked from commit 804e828d52ec922f3970e847652ab1ee5538b9b0)
+---
+ lib/krb5_wrap/krb5_samba.c | 111 ---------------------------------------------
+ lib/krb5_wrap/krb5_samba.h |   5 --
+ 2 files changed, 116 deletions(-)
+
+diff --git a/lib/krb5_wrap/krb5_samba.c b/lib/krb5_wrap/krb5_samba.c
+index 2b0ec6bfa0e..0b67ea52a19 100644
+--- a/lib/krb5_wrap/krb5_samba.c
++++ b/lib/krb5_wrap/krb5_samba.c
+@@ -2604,61 +2604,6 @@ krb5_error_code smb_krb5_principal_set_realm(krb5_context context,
+ }
+ 
+ 
+-/************************************************************************
+- Routine to get the default realm from the kerberos credentials cache.
+- Caller must free if the return value is not NULL.
+-************************************************************************/
+-
+-static char *smb_krb5_get_default_realm_from_ccache(TALLOC_CTX *mem_ctx)
+-{
+-	char *realm = NULL;
+-	krb5_context ctx = NULL;
+-	krb5_ccache cc = NULL;
+-	krb5_principal princ = NULL;
+-
+-	initialize_krb5_error_table();
+-	if (krb5_init_context(&ctx)) {
+-		return NULL;
+-	}
+-
+-	DEBUG(5,("kerberos_get_default_realm_from_ccache: "
+-		"Trying to read krb5 cache: %s\n",
+-		krb5_cc_default_name(ctx)));
+-	if (krb5_cc_default(ctx, &cc)) {
+-		DEBUG(5,("kerberos_get_default_realm_from_ccache: "
+-			"failed to read default cache\n"));
+-		goto out;
+-	}
+-	if (krb5_cc_get_principal(ctx, cc, &princ)) {
+-		DEBUG(5,("kerberos_get_default_realm_from_ccache: "
+-			"failed to get default principal\n"));
+-		goto out;
+-	}
+-
+-#if defined(HAVE_KRB5_PRINCIPAL_GET_REALM)
+-	realm = talloc_strdup(mem_ctx, krb5_principal_get_realm(ctx, princ));
+-#elif defined(HAVE_KRB5_PRINC_REALM)
+-	{
+-		krb5_data *realm_data = krb5_princ_realm(ctx, princ);
+-		realm = talloc_strndup(mem_ctx, realm_data->data, realm_data->length);
+-	}
+-#endif
+-
+-  out:
+-
+-	if (ctx) {
+-		if (princ) {
+-			krb5_free_principal(ctx, princ);
+-		}
+-		if (cc) {
+-			krb5_cc_close(ctx, cc);
+-		}
+-		krb5_free_context(ctx);
+-	}
+-
+-	return realm;
+-}
+-
+ /**
+  * @brief Get the realm from the service hostname.
+  *
+@@ -2749,62 +2694,6 @@ char *smb_krb5_get_realm_from_hostname(TALLOC_CTX *mem_ctx,
+ }
+ 
+ /**
+- * @brief Get the principal as a string from the service hostname.
+- *
+- * @param[in]  mem_ctx  The talloc context
+- *
+- * @param[in]  service  The service name
+- *
+- * @param[in]  remote_name The remote name
+- *
+- * @param[in]  default_realm The default_realm if we cannot get it from the
+- *                           hostname or netbios name.
+- *
+- * @return A talloc'ed principal string or NULL if an error occured.
+- *
+- * The caller needs to free the principal with talloc_free() if it isn't needed
+- * anymore.
+- */
+-char *smb_krb5_get_principal_from_service_hostname(TALLOC_CTX *mem_ctx,
+-						   const char *service,
+-						   const char *remote_name,
+-						   const char *default_realm)
+-{
+-	char *realm = NULL;
+-	char *host = NULL;
+-	char *principal;
+-	host = strchr_m(remote_name, '.');
+-	if (host) {
+-		/* DNS name. */
+-		realm = smb_krb5_get_realm_from_hostname(talloc_tos(),
+-							 remote_name,
+-							 default_realm);
+-	} else {
+-		/* NetBIOS name - use our realm. */
+-		realm = smb_krb5_get_default_realm_from_ccache(talloc_tos());
+-	}
+-
+-	if (realm == NULL || *realm == '\0') {
+-		realm = talloc_strdup(talloc_tos(), default_realm);
+-		if (!realm) {
+-			return NULL;
+-		}
+-		DEBUG(3,("Cannot get realm from, "
+-			 "desthost %s or default ccache. Using default "
+-			 "smb.conf realm %s\n",
+-			 remote_name,
+-			 realm));
+-	}
+-
+-	principal = talloc_asprintf(mem_ctx,
+-				    "%s/%s@%s",
+-				    service, remote_name,
+-				    realm);
+-	TALLOC_FREE(realm);
+-	return principal;
+-}
+-
+-/**
+  * @brief Get an error string from a Kerberos error code.
+  *
+  * @param[in]  context  The library context.
+diff --git a/lib/krb5_wrap/krb5_samba.h b/lib/krb5_wrap/krb5_samba.h
+index accae449a0e..c921538efcb 100644
+--- a/lib/krb5_wrap/krb5_samba.h
++++ b/lib/krb5_wrap/krb5_samba.h
+@@ -318,11 +318,6 @@ char *smb_krb5_get_realm_from_hostname(TALLOC_CTX *mem_ctx,
+ 				       const char *hostname,
+ 				       const char *client_realm);
+ 
+-char *smb_krb5_get_principal_from_service_hostname(TALLOC_CTX *mem_ctx,
+-						   const char *service,
+-						   const char *remote_name,
+-						   const char *default_realm);
+-
+ char *smb_get_krb5_error_message(krb5_context context,
+ 				 krb5_error_code code,
+ 				 TALLOC_CTX *mem_ctx);
+-- 
+2.12.0
+
+
+From 0ea7203430b580e93816035b8201ddd11346cd4e Mon Sep 17 00:00:00 2001
+From: Andreas Schneider <asn@samba.org>
+Date: Mon, 6 Mar 2017 08:16:11 +0100
+Subject: [PATCH 15/20] s3:gse: Pass down the gensec_security pointer
+
+BUG: https://bugzilla.samba.org/show_bug.cgi?id=12554
+
+Pair-Programmed-With: Stefan Metzmacher <metze@samba.org>
+
+Signed-off-by: Andreas Schneider <asn@samba.org>
+Signed-off-by: Stefan Metzmacher <metze@samba.org>
+(cherry picked from commit e6b1e58874de30d094f9bce474479cfddb39d3fc)
+---
+ source3/librpc/crypto/gse.c | 19 ++++++++++++-------
+ 1 file changed, 12 insertions(+), 7 deletions(-)
+
+diff --git a/source3/librpc/crypto/gse.c b/source3/librpc/crypto/gse.c
+index 57632f6cc8f..5a39522a828 100644
+--- a/source3/librpc/crypto/gse.c
++++ b/source3/librpc/crypto/gse.c
+@@ -352,10 +352,13 @@ err_out:
+ }
+ 
+ static NTSTATUS gse_get_client_auth_token(TALLOC_CTX *mem_ctx,
+-					  struct gse_context *gse_ctx,
++					  struct gensec_security *gensec_security,
+ 					  const DATA_BLOB *token_in,
+ 					  DATA_BLOB *token_out)
+ {
++	struct gse_context *gse_ctx =
++		talloc_get_type_abort(gensec_security->private_data,
++				      struct gse_context);
+ 	OM_uint32 gss_maj, gss_min;
+ 	gss_buffer_desc in_data;
+ 	gss_buffer_desc out_data;
+@@ -542,10 +545,13 @@ done:
+ }
+ 
+ static NTSTATUS gse_get_server_auth_token(TALLOC_CTX *mem_ctx,
+-					  struct gse_context *gse_ctx,
++					  struct gensec_security *gensec_security,
+ 					  const DATA_BLOB *token_in,
+ 					  DATA_BLOB *token_out)
+ {
++	struct gse_context *gse_ctx =
++		talloc_get_type_abort(gensec_security->private_data,
++				      struct gse_context);
+ 	OM_uint32 gss_maj, gss_min;
+ 	gss_buffer_desc in_data;
+ 	gss_buffer_desc out_data;
+@@ -762,17 +768,16 @@ static NTSTATUS gensec_gse_update(struct gensec_security *gensec_security,
+ 				  const DATA_BLOB in, DATA_BLOB *out)
+ {
+ 	NTSTATUS status;
+-	struct gse_context *gse_ctx =
+-		talloc_get_type_abort(gensec_security->private_data,
+-		struct gse_context);
+ 
+ 	switch (gensec_security->gensec_role) {
+ 	case GENSEC_CLIENT:
+-		status = gse_get_client_auth_token(mem_ctx, gse_ctx,
++		status = gse_get_client_auth_token(mem_ctx,
++						   gensec_security,
+ 						   &in, out);
+ 		break;
+ 	case GENSEC_SERVER:
+-		status = gse_get_server_auth_token(mem_ctx, gse_ctx,
++		status = gse_get_server_auth_token(mem_ctx,
++						   gensec_security,
+ 						   &in, out);
+ 		break;
+ 	}
+-- 
+2.12.0
+
+
+From 36b353247939414cd7f91abd27bfc553bd62c06f Mon Sep 17 00:00:00 2001
+From: Andreas Schneider <asn@samba.org>
+Date: Thu, 9 Mar 2017 08:05:26 +0100
+Subject: [PATCH 16/20] s3:gse: Move setup of service_principal to update
+ function
+
+BUG: https://bugzilla.samba.org/show_bug.cgi?id=12554
+
+Pair-Programmed-With: Stefan Metzmacher <metze@samba.org>
+
+Signed-off-by: Andreas Schneider <asn@samba.org>
+Signed-off-by: Stefan Metzmacher <metze@samba.org>
+(cherry picked from commit 3ba1ad1f8c7871070d0ecbe5d49c5c44afe98bbf)
+---
+ source3/librpc/crypto/gse.c | 97 +++++++++++++++++++++++++++++++++------------
+ 1 file changed, 71 insertions(+), 26 deletions(-)
+
+diff --git a/source3/librpc/crypto/gse.c b/source3/librpc/crypto/gse.c
+index 5a39522a828..3580181061e 100644
+--- a/source3/librpc/crypto/gse.c
++++ b/source3/librpc/crypto/gse.c
+@@ -255,8 +255,6 @@ static NTSTATUS gse_init_client(TALLOC_CTX *mem_ctx,
+ 	gss_buffer_desc empty_buffer = GSS_C_EMPTY_BUFFER;
+ 	gss_OID oid = discard_const(GSS_KRB5_CRED_NO_CI_FLAGS_X);
+ #endif
+-	char *server_principal = NULL;
+-	char *server_realm = NULL;
+ 	NTSTATUS status;
+ 
+ 	if (!server || !service) {
+@@ -270,28 +268,6 @@ static NTSTATUS gse_init_client(TALLOC_CTX *mem_ctx,
+ 		return NT_STATUS_NO_MEMORY;
+ 	}
+ 
+-	/* Guess the realm based on the supplied service, and avoid the GSS libs
+-	   doing DNS lookups which may fail.
+-	*/
+-	server_realm = smb_krb5_get_realm_from_hostname(mem_ctx,
+-							server,
+-							realm);
+-	if (server_realm == NULL) {
+-		return NT_STATUS_NO_MEMORY;
+-	}
+-
+-	status = gse_setup_server_principal(mem_ctx,
+-					    NULL,
+-					    service,
+-					    server,
+-					    server_realm,
+-					    &server_principal,
+-					    &gse_ctx->server_name);
+-	TALLOC_FREE(server_realm);
+-	if (!NT_STATUS_IS_OK(status)) {
+-		return status;
+-	}
+-
+ 	/* TODO: get krb5 ticket using username/password, if no valid
+ 	 * one already available in ccache */
+ 
+@@ -342,11 +318,9 @@ static NTSTATUS gse_init_client(TALLOC_CTX *mem_ctx,
+ #endif
+ 
+ 	*_gse_ctx = gse_ctx;
+-	TALLOC_FREE(server_principal);
+ 	return NT_STATUS_OK;
+ 
+ err_out:
+-	TALLOC_FREE(server_principal);
+ 	TALLOC_FREE(gse_ctx);
+ 	return status;
+ }
+@@ -366,10 +340,81 @@ static NTSTATUS gse_get_client_auth_token(TALLOC_CTX *mem_ctx,
+ 	NTSTATUS status;
+ 	OM_uint32 time_rec = 0;
+ 	struct timeval tv;
++	struct cli_credentials *cli_creds = gensec_get_credentials(gensec_security);
++	const char *hostname = gensec_get_target_hostname(gensec_security);
++	const char *service = gensec_get_target_service(gensec_security);
++	const char *client_realm = cli_credentials_get_realm(cli_creds);
++	char *server_principal = NULL;
++	char *server_realm = NULL;
+ 
+ 	in_data.value = token_in->data;
+ 	in_data.length = token_in->length;
+ 
++	/*
++	 * With credentials for administrator@FOREST1.EXAMPLE.COM this patch
++	 * changes the target_principal for the ldap service of host
++	 * dc2.forest2.example.com from
++	 *
++	 *   ldap/dc2.forest2.example.com@FOREST1.EXAMPLE.COM
++	 *
++	 * to
++	 *
++	 *   ldap/dc2.forest2.example.com@FOREST2.EXAMPLE.COM
++	 *
++	 * Typically ldap/dc2.forest2.example.com@FOREST1.EXAMPLE.COM should be
++	 * used in order to allow the KDC of FOREST1.EXAMPLE.COM to generate a
++	 * referral ticket for krbtgt/FOREST2.EXAMPLE.COM@FOREST1.EXAMPLE.COM.
++	 *
++	 * The problem is that KDCs only return such referral tickets if
++	 * there's a forest trust between FOREST1.EXAMPLE.COM and
++	 * FOREST2.EXAMPLE.COM. If there's only an external domain trust
++	 * between FOREST1.EXAMPLE.COM and FOREST2.EXAMPLE.COM the KDC of
++	 * FOREST1.EXAMPLE.COM will respond with S_PRINCIPAL_UNKNOWN when being
++	 * asked for ldap/dc2.forest2.example.com@FOREST1.EXAMPLE.COM.
++	 *
++	 * In the case of an external trust the client can still ask explicitly
++	 * for krbtgt/FOREST2.EXAMPLE.COM@FOREST1.EXAMPLE.COM and the KDC of
++	 * FOREST1.EXAMPLE.COM will generate it.
++	 *
++	 * From there the client can use the
++	 * krbtgt/FOREST2.EXAMPLE.COM@FOREST1.EXAMPLE.COM ticket and ask a KDC
++	 * of FOREST2.EXAMPLE.COM for a service ticket for
++	 * ldap/dc2.forest2.example.com@FOREST2.EXAMPLE.COM.
++	 *
++	 * With Heimdal we'll get the fallback on S_PRINCIPAL_UNKNOWN behavior
++	 * when we pass ldap/dc2.forest2.example.com@FOREST2.EXAMPLE.COM as
++	 * target principal. As _krb5_get_cred_kdc_any() first calls
++	 * get_cred_kdc_referral() (which always starts with the client realm)
++	 * and falls back to get_cred_kdc_capath() (which starts with the given
++	 * realm).
++	 *
++	 * MIT krb5 only tries the given realm of the target principal, if we
++	 * want to autodetect support for transitive forest trusts, would have
++	 * to do the fallback ourself.
++	 */
++	if (gse_ctx->server_name == NULL) {
++		server_realm = smb_krb5_get_realm_from_hostname(mem_ctx,
++								hostname,
++								client_realm);
++		if (server_realm == NULL) {
++			return NT_STATUS_NO_MEMORY;
++		}
++
++		status = gse_setup_server_principal(mem_ctx,
++						    NULL,
++						    service,
++						    hostname,
++						    server_realm,
++						    &server_principal,
++						    &gse_ctx->server_name);
++		TALLOC_FREE(server_realm);
++		if (!NT_STATUS_IS_OK(status)) {
++			return status;
++		}
++
++		TALLOC_FREE(server_principal);
++	}
++
+ 	gss_maj = gss_init_sec_context(&gss_min,
+ 					gse_ctx->creds,
+ 					&gse_ctx->gssapi_context,
+-- 
+2.12.0
+
+
+From 5ca321eaa79cdf9de1166f49365051d4d67560f9 Mon Sep 17 00:00:00 2001
+From: Andreas Schneider <asn@samba.org>
+Date: Thu, 9 Mar 2017 08:11:07 +0100
+Subject: [PATCH 17/20] s3:gse: Check if we have a target_princpal set we
+ should use
+
+BUG: https://bugzilla.samba.org/show_bug.cgi?id=12554
+
+Pair-Programmed-With: Stefan Metzmacher <metze@samba.org>
+
+Signed-off-by: Andreas Schneider <asn@samba.org>
+Signed-off-by: Stefan Metzmacher <metze@samba.org>
+(cherry picked from commit ada31d65d6c5929d2fbddfea5611a5f5fe5a0d74)
+---
+ source3/librpc/crypto/gse.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/source3/librpc/crypto/gse.c b/source3/librpc/crypto/gse.c
+index 3580181061e..721fd8c1625 100644
+--- a/source3/librpc/crypto/gse.c
++++ b/source3/librpc/crypto/gse.c
+@@ -341,6 +341,7 @@ static NTSTATUS gse_get_client_auth_token(TALLOC_CTX *mem_ctx,
+ 	OM_uint32 time_rec = 0;
+ 	struct timeval tv;
+ 	struct cli_credentials *cli_creds = gensec_get_credentials(gensec_security);
++	const char *target_principal = gensec_get_target_principal(gensec_security);
+ 	const char *hostname = gensec_get_target_hostname(gensec_security);
+ 	const char *service = gensec_get_target_service(gensec_security);
+ 	const char *client_realm = cli_credentials_get_realm(cli_creds);
+@@ -401,7 +402,7 @@ static NTSTATUS gse_get_client_auth_token(TALLOC_CTX *mem_ctx,
+ 		}
+ 
+ 		status = gse_setup_server_principal(mem_ctx,
+-						    NULL,
++						    target_principal,
+ 						    service,
+ 						    hostname,
+ 						    server_realm,
+-- 
+2.12.0
+
+
+From 8b88c6bf158e5da0cc238472390f3346aa05ef53 Mon Sep 17 00:00:00 2001
+From: Andreas Schneider <asn@samba.org>
+Date: Thu, 9 Mar 2017 08:18:27 +0100
+Subject: [PATCH 18/20] s3:gse: Correctly handle external trusts with MIT
+
+BUG: https://bugzilla.samba.org/show_bug.cgi?id=12554
+
+Pair-Programmed-With: Stefan Metzmacher <metze@samba.org>
+
+Signed-off-by: Andreas Schneider <asn@samba.org>
+Signed-off-by: Stefan Metzmacher <metze@samba.org>
+(cherry picked from commit b8bca7d08fe05758e536767b1146cdcdd8b9fee3)
+---
+ source3/librpc/crypto/gse.c | 54 +++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 54 insertions(+)
+
+diff --git a/source3/librpc/crypto/gse.c b/source3/librpc/crypto/gse.c
+index 721fd8c1625..3abf774633b 100644
+--- a/source3/librpc/crypto/gse.c
++++ b/source3/librpc/crypto/gse.c
+@@ -347,6 +347,7 @@ static NTSTATUS gse_get_client_auth_token(TALLOC_CTX *mem_ctx,
+ 	const char *client_realm = cli_credentials_get_realm(cli_creds);
+ 	char *server_principal = NULL;
+ 	char *server_realm = NULL;
++	bool fallback = false;
+ 
+ 	in_data.value = token_in->data;
+ 	in_data.length = token_in->length;
+@@ -393,6 +394,50 @@ static NTSTATUS gse_get_client_auth_token(TALLOC_CTX *mem_ctx,
+ 	 * want to autodetect support for transitive forest trusts, would have
+ 	 * to do the fallback ourself.
+ 	 */
++#ifndef SAMBA4_USES_HEIMDAL
++	if (gse_ctx->server_name == NULL) {
++		OM_uint32 gss_min2 = 0;
++
++		status = gse_setup_server_principal(mem_ctx,
++						    target_principal,
++						    service,
++						    hostname,
++						    client_realm,
++						    &server_principal,
++						    &gse_ctx->server_name);
++		if (!NT_STATUS_IS_OK(status)) {
++			return status;
++		}
++
++		gss_maj = gss_init_sec_context(&gss_min,
++					       gse_ctx->creds,
++					       &gse_ctx->gssapi_context,
++					       gse_ctx->server_name,
++					       &gse_ctx->gss_mech,
++					       gse_ctx->gss_want_flags,
++					       0,
++					       GSS_C_NO_CHANNEL_BINDINGS,
++					       &in_data,
++					       NULL,
++					       &out_data,
++					       &gse_ctx->gss_got_flags,
++					       &time_rec);
++		if (gss_maj != GSS_S_FAILURE) {
++			goto init_sec_context_done;
++		}
++		if (gss_min != (OM_uint32)KRB5KDC_ERR_S_PRINCIPAL_UNKNOWN) {
++			goto init_sec_context_done;
++		}
++		if (target_principal != NULL) {
++			goto init_sec_context_done;
++		}
++
++		fallback = true;
++		TALLOC_FREE(server_principal);
++		gss_release_name(&gss_min2, &gse_ctx->server_name);
++	}
++#endif /* !SAMBA4_USES_HEIMDAL */
++
+ 	if (gse_ctx->server_name == NULL) {
+ 		server_realm = smb_krb5_get_realm_from_hostname(mem_ctx,
+ 								hostname,
+@@ -401,6 +446,11 @@ static NTSTATUS gse_get_client_auth_token(TALLOC_CTX *mem_ctx,
+ 			return NT_STATUS_NO_MEMORY;
+ 		}
+ 
++		if (fallback &&
++		    strequal(client_realm, server_realm)) {
++			goto init_sec_context_done;
++		}
++
+ 		status = gse_setup_server_principal(mem_ctx,
+ 						    target_principal,
+ 						    service,
+@@ -425,6 +475,10 @@ static NTSTATUS gse_get_client_auth_token(TALLOC_CTX *mem_ctx,
+ 					0, GSS_C_NO_CHANNEL_BINDINGS,
+ 					&in_data, NULL, &out_data,
+ 					&gse_ctx->gss_got_flags, &time_rec);
++	goto init_sec_context_done;
++	/* JUMP! */
++init_sec_context_done:
++
+ 	switch (gss_maj) {
+ 	case GSS_S_COMPLETE:
+ 		/* we are done with it */
+-- 
+2.12.0
+
+
+From 290de34d42477022d8b5a236b3d0953a178c5e40 Mon Sep 17 00:00:00 2001
+From: Stefan Metzmacher <metze@samba.org>
+Date: Sun, 29 Jan 2017 17:19:14 +0100
+Subject: [PATCH 19/20] HEIMDAL:kdc: make it possible to disable the principal
+ based referral detection
+
+BUG: https://bugzilla.samba.org/show_bug.cgi?id=12554
+
+Signed-off-by: Stefan Metzmacher <metze@samba.org>
+Reviewed-by: Andreas Schneider <asn@samba.org>
+(cherry picked from commit 209886e95c3afe1e4e50bacc30b40a543856a7a0)
+---
+ source4/heimdal/kdc/default_config.c | 1 +
+ source4/heimdal/kdc/kdc.h            | 2 ++
+ source4/heimdal/kdc/krb5tgs.c        | 4 +++-
+ 3 files changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/source4/heimdal/kdc/default_config.c b/source4/heimdal/kdc/default_config.c
+index 6fbf5fdae15..0129c5d3c54 100644
+--- a/source4/heimdal/kdc/default_config.c
++++ b/source4/heimdal/kdc/default_config.c
+@@ -55,6 +55,7 @@ krb5_kdc_get_config(krb5_context context, krb5_kdc_configuration **config)
+     c->preauth_use_strongest_session_key = FALSE;
+     c->tgs_use_strongest_session_key = FALSE;
+     c->use_strongest_server_key = TRUE;
++    c->autodetect_referrals = TRUE;
+     c->check_ticket_addresses = TRUE;
+     c->allow_null_ticket_addresses = TRUE;
+     c->allow_anonymous = FALSE;
+diff --git a/source4/heimdal/kdc/kdc.h b/source4/heimdal/kdc/kdc.h
+index 9d52fd4c2ec..16263d6919b 100644
+--- a/source4/heimdal/kdc/kdc.h
++++ b/source4/heimdal/kdc/kdc.h
+@@ -69,6 +69,8 @@ typedef struct krb5_kdc_configuration {
+     krb5_boolean allow_anonymous;
+     enum krb5_kdc_trpolicy trpolicy;
+ 
++    krb5_boolean autodetect_referrals;
++
+     krb5_boolean enable_pkinit;
+     krb5_boolean pkinit_princ_in_cert;
+     const char *pkinit_kdc_identity;
+diff --git a/source4/heimdal/kdc/krb5tgs.c b/source4/heimdal/kdc/krb5tgs.c
+index 334a6eb1dc8..a888788bb6f 100644
+--- a/source4/heimdal/kdc/krb5tgs.c
++++ b/source4/heimdal/kdc/krb5tgs.c
+@@ -1660,7 +1660,9 @@ server_lookup:
+ 	Realm req_rlm;
+ 	krb5_realm *realms;
+ 
+-	if ((req_rlm = get_krbtgt_realm(&sp->name)) != NULL) {
++	if (!config->autodetect_referrals) {
++		/* noop */
++	} else if ((req_rlm = get_krbtgt_realm(&sp->name)) != NULL) {
+ 	    if(nloop++ < 2) {
+ 		new_rlm = find_rpath(context, tgt->crealm, req_rlm);
+ 		if(new_rlm) {
+-- 
+2.12.0
+
+
+From b98d399a9b3076443fa12fab5f5e13b8d6e2fe26 Mon Sep 17 00:00:00 2001
+From: Stefan Metzmacher <metze@samba.org>
+Date: Sun, 29 Jan 2017 17:20:09 +0100
+Subject: [PATCH 20/20] s4:kdc: disable principal based autodetected referral
+ detection
+
+BUG: https://bugzilla.samba.org/show_bug.cgi?id=12554
+
+Signed-off-by: Stefan Metzmacher <metze@samba.org>
+Reviewed-by: Andreas Schneider <asn@samba.org>
+(cherry picked from commit 3314bf52aaef60ef5cc1110587b53064df7c475d)
+---
+ source4/kdc/kdc-heimdal.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/source4/kdc/kdc-heimdal.c b/source4/kdc/kdc-heimdal.c
+index f2927e5cb9f..061296a4f40 100644
+--- a/source4/kdc/kdc-heimdal.c
++++ b/source4/kdc/kdc-heimdal.c
+@@ -379,6 +379,8 @@ static void kdc_task_init(struct task_server *task)
+ 	kdc_config->tgs_use_strongest_session_key = false;
+ 	kdc_config->use_strongest_server_key = true;
+ 
++	kdc_config->autodetect_referrals = false;
++
+ 	/* Register hdb-samba4 hooks for use as a keytab */
+ 
+ 	kdc->base_ctx = talloc_zero(kdc, struct samba_kdc_base_context);
+-- 
+2.12.0
+

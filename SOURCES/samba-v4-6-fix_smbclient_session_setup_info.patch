@@ -1,0 +1,339 @@
+From a57290580b7fcffea9b76991f2dd49ad480d3b64 Mon Sep 17 00:00:00 2001
+From: Stefan Metzmacher <metze@samba.org>
+Date: Wed, 15 Mar 2017 17:04:30 +0000
+Subject: [PATCH 1/2] libcli/smb: Fix alignment problems of
+ smb_bytes_pull_str()
+
+This function needs to get the whole smb buffer in order to get
+the alignment for unicode correct.
+
+BUG: https://bugzilla.samba.org/show_bug.cgi?id=12824
+
+Signed-off-by: Stefan Metzmacher <metze@samba.org>
+Reviewed-by: Jeremy Allison <jra@samba.org>
+Reviewed-by: Andreas Schneider <asn@samba.org>
+(cherry picked from commit e60e77a8afd095bfdb3d678aa48570ca159d9b24)
+---
+ libcli/smb/smb1cli_session.c | 28 +++++++++++++-------------
+ libcli/smb/smb_util.h        |  3 ++-
+ libcli/smb/util.c            | 47 +++++++++++++++++++++++++++++---------------
+ 3 files changed, 47 insertions(+), 31 deletions(-)
+
+diff --git a/libcli/smb/smb1cli_session.c b/libcli/smb/smb1cli_session.c
+index 9d92aa6aed4..11614df0ae4 100644
+--- a/libcli/smb/smb1cli_session.c
++++ b/libcli/smb/smb1cli_session.c
+@@ -210,16 +210,16 @@ static void smb1cli_session_setup_lm21_done(struct tevent_req *subreq)
+ 	p = bytes;
+ 
+ 	status = smb_bytes_pull_str(state, &state->out_native_os,
+-				    use_unicode, p,
+-				    bytes+num_bytes-p, &ret);
++				    use_unicode, bytes, num_bytes,
++				    p, &ret);
+ 	if (tevent_req_nterror(req, status)) {
+ 		return;
+ 	}
+ 	p += ret;
+ 
+ 	status = smb_bytes_pull_str(state, &state->out_native_lm,
+-				    use_unicode, p,
+-				    bytes+num_bytes-p, &ret);
++				    use_unicode, bytes, num_bytes,
++				    p, &ret);
+ 	if (tevent_req_nterror(req, status)) {
+ 		return;
+ 	}
+@@ -493,24 +493,24 @@ static void smb1cli_session_setup_nt1_done(struct tevent_req *subreq)
+ 	p = bytes;
+ 
+ 	status = smb_bytes_pull_str(state, &state->out_native_os,
+-				    use_unicode, p,
+-				    bytes+num_bytes-p, &ret);
++				    use_unicode, bytes, num_bytes,
++				    p, &ret);
+ 	if (tevent_req_nterror(req, status)) {
+ 		return;
+ 	}
+ 	p += ret;
+ 
+ 	status = smb_bytes_pull_str(state, &state->out_native_lm,
+-				    use_unicode, p,
+-				    bytes+num_bytes-p, &ret);
++				    use_unicode, bytes, num_bytes,
++				    p, &ret);
+ 	if (tevent_req_nterror(req, status)) {
+ 		return;
+ 	}
+ 	p += ret;
+ 
+ 	status = smb_bytes_pull_str(state, &state->out_primary_domain,
+-				    use_unicode, p,
+-				    bytes+num_bytes-p, &ret);
++				    use_unicode, bytes, num_bytes,
++				    p, &ret);
+ 	if (tevent_req_nterror(req, status)) {
+ 		return;
+ 	}
+@@ -754,16 +754,16 @@ static void smb1cli_session_setup_ext_done(struct tevent_req *subreq)
+ 	p += out_security_blob_length;
+ 
+ 	status = smb_bytes_pull_str(state, &state->out_native_os,
+-				    use_unicode, p,
+-				    bytes+num_bytes-p, &ret);
++				    use_unicode, bytes, num_bytes,
++				    p, &ret);
+ 	if (tevent_req_nterror(req, status)) {
+ 		return;
+ 	}
+ 	p += ret;
+ 
+ 	status = smb_bytes_pull_str(state, &state->out_native_lm,
+-				    use_unicode, p,
+-				    bytes+num_bytes-p, &ret);
++				    use_unicode, bytes, num_bytes,
++				    p, &ret);
+ 	if (tevent_req_nterror(req, status)) {
+ 		return;
+ 	}
+diff --git a/libcli/smb/smb_util.h b/libcli/smb/smb_util.h
+index 7e6f0a4ebc4..2884786339d 100644
+--- a/libcli/smb/smb_util.h
++++ b/libcli/smb/smb_util.h
+@@ -38,4 +38,5 @@ uint8_t *trans2_bytes_push_bytes(uint8_t *buf,
+ 				 const uint8_t *bytes, size_t num_bytes);
+ NTSTATUS smb_bytes_pull_str(TALLOC_CTX *mem_ctx, char **_str, bool ucs2,
+ 			    const uint8_t *buf, size_t buf_len,
+-			    size_t *pbuf_consumed);
++			    const uint8_t *position,
++			    size_t *_consumed);
+diff --git a/libcli/smb/util.c b/libcli/smb/util.c
+index ef8c9fafa35..7ef909c6077 100644
+--- a/libcli/smb/util.c
++++ b/libcli/smb/util.c
+@@ -319,29 +319,43 @@ uint8_t *trans2_bytes_push_bytes(uint8_t *buf,
+ static NTSTATUS internal_bytes_pull_str(TALLOC_CTX *mem_ctx, char **_str,
+ 					bool ucs2, bool align_odd,
+ 					const uint8_t *buf, size_t buf_len,
+-					size_t *pbuf_consumed)
++					const uint8_t *position,
++					size_t *p_consumed)
+ {
+ 	size_t pad = 0;
++	size_t offset;
+ 	char *str = NULL;
+ 	size_t str_len = 0;
+ 	bool ok;
+ 
+ 	*_str = NULL;
+-	if (pbuf_consumed != NULL) {
+-		*pbuf_consumed = 0;
++	if (p_consumed != NULL) {
++		*p_consumed = 0;
++	}
++
++	if (position < buf) {
++		return NT_STATUS_INTERNAL_ERROR;
++	}
++
++	offset = PTR_DIFF(position, buf);
++	if (offset > buf_len) {
++		return NT_STATUS_BUFFER_TOO_SMALL;
+ 	}
+ 
+ 	if (ucs2 &&
+-	    ((align_odd && (buf_len % 2 == 0)) ||
+-	     (!align_odd && (buf_len % 2 == 1)))) {
+-		if (buf_len < 1) {
+-			return NT_STATUS_BUFFER_TOO_SMALL;
+-		}
+-		pad = 1;
+-		buf_len -= pad;
+-		buf += pad;
++	    ((align_odd && (offset % 2 == 0)) ||
++	     (!align_odd && (offset % 2 == 1)))) {
++		pad += 1;
++		offset += 1;
++	}
++
++	if (offset > buf_len) {
++		return NT_STATUS_BUFFER_TOO_SMALL;
+ 	}
+ 
++	buf_len -= offset;
++	buf += offset;
++
+ 	if (ucs2) {
+ 		buf_len = utf16_len_n(buf, buf_len);
+ 	} else {
+@@ -361,17 +375,18 @@ static NTSTATUS internal_bytes_pull_str(TALLOC_CTX *mem_ctx, char **_str,
+ 		return map_nt_error_from_unix_common(errno);
+ 	}
+ 
+-	if (pbuf_consumed != NULL) {
+-		*pbuf_consumed = buf_len + pad;
++	if (p_consumed != NULL) {
++		*p_consumed = buf_len + pad;
+ 	}
+ 	*_str = str;
+-	return NT_STATUS_OK;;
++	return NT_STATUS_OK;
+ }
+ 
+ NTSTATUS smb_bytes_pull_str(TALLOC_CTX *mem_ctx, char **_str, bool ucs2,
+ 			    const uint8_t *buf, size_t buf_len,
+-			    size_t *_buf_consumed)
++			    const uint8_t *position,
++			    size_t *_consumed)
+ {
+ 	return internal_bytes_pull_str(mem_ctx, _str, ucs2, true,
+-				       buf, buf_len, _buf_consumed);
++				       buf, buf_len, position, _consumed);
+ }
+-- 
+2.13.1
+
+
+From 460941fe916d787057437412eef64c0ffdd1f65d Mon Sep 17 00:00:00 2001
+From: Stefan Metzmacher <metze@samba.org>
+Date: Wed, 15 Mar 2017 17:04:44 +0000
+Subject: [PATCH 2/2] s3:libsmb: add cli_state_update_after_sesssetup() helper
+ function
+
+This function updates cli->server_{os,type,domain} to valid values
+after a session setup.
+
+BUG: https://bugzilla.samba.org/show_bug.cgi?id=12779
+
+Signed-off-by: Stefan Metzmacher <metze@samba.org>
+Reviewed-by: Andreas Schneider <asn@samba.org>
+(cherry picked from commit e0069bd2a4820eca17c59d91bd1853f2f053a7a3)
+---
+ source3/libsmb/cliconnect.c | 74 +++++++++++++++++++++++++++++++--------------
+ 1 file changed, 52 insertions(+), 22 deletions(-)
+
+diff --git a/source3/libsmb/cliconnect.c b/source3/libsmb/cliconnect.c
+index a2362ceb863..ef03da17eec 100644
+--- a/source3/libsmb/cliconnect.c
++++ b/source3/libsmb/cliconnect.c
+@@ -372,6 +372,38 @@ NTSTATUS cli_session_creds_prepare_krb5(struct cli_state *cli,
+ 	return NT_STATUS_OK;
+ }
+ 
++static NTSTATUS cli_state_update_after_sesssetup(struct cli_state *cli,
++						 const char *native_os,
++						 const char *native_lm,
++						 const char *primary_domain)
++{
++#define _VALID_STR(p) ((p) != NULL && (p)[0] != '\0')
++
++	if (!_VALID_STR(cli->server_os) && _VALID_STR(native_os)) {
++		cli->server_os = talloc_strdup(cli, native_os);
++		if (cli->server_os == NULL) {
++			return NT_STATUS_NO_MEMORY;
++		}
++	}
++
++	if (!_VALID_STR(cli->server_type) && _VALID_STR(native_lm)) {
++		cli->server_type = talloc_strdup(cli, native_lm);
++		if (cli->server_type == NULL) {
++			return NT_STATUS_NO_MEMORY;
++		}
++	}
++
++	if (!_VALID_STR(cli->server_domain) && _VALID_STR(primary_domain)) {
++		cli->server_domain = talloc_strdup(cli, primary_domain);
++		if (cli->server_domain == NULL) {
++			return NT_STATUS_NO_MEMORY;
++		}
++	}
++
++#undef _VALID_STRING
++	return NT_STATUS_OK;
++}
++
+ /********************************************************
+  Utility function to ensure we always return at least
+  a valid char * pointer to an empty string for the
+@@ -762,7 +794,6 @@ static void cli_sesssetup_blob_done(struct tevent_req *subreq)
+ 		subreq, struct tevent_req);
+ 	struct cli_sesssetup_blob_state *state = tevent_req_data(
+ 		req, struct cli_sesssetup_blob_state);
+-	struct cli_state *cli = state->cli;
+ 	NTSTATUS status;
+ 
+ 	if (smbXcli_conn_protocol(state->cli->conn) >= PROTOCOL_SMB2_02) {
+@@ -784,15 +815,16 @@ static void cli_sesssetup_blob_done(struct tevent_req *subreq)
+ 		return;
+ 	}
+ 
+-	if (cli->server_os == NULL) {
+-		cli->server_os = talloc_move(cli, &state->out_native_os);
+-	}
+-	if (cli->server_type == NULL) {
+-		cli->server_type = talloc_move(cli, &state->out_native_lm);
+-	}
+-
+ 	state->status = status;
+ 
++	status = cli_state_update_after_sesssetup(state->cli,
++						  state->out_native_os,
++						  state->out_native_lm,
++						  NULL);
++	if (tevent_req_nterror(req, status)) {
++		return;
++	}
++
+ 	if (state->blob.length != 0) {
+ 		/*
+ 		 * More to send
+@@ -1667,14 +1699,12 @@ static void cli_session_setup_creds_done_nt1(struct tevent_req *subreq)
+ 		return;
+ 	}
+ 
+-	if (cli->server_os == NULL) {
+-		cli->server_os = talloc_move(cli, &state->out_native_os);
+-	}
+-	if (cli->server_type == NULL) {
+-		cli->server_type = talloc_move(cli, &state->out_native_lm);
+-	}
+-	if (cli->server_domain == NULL) {
+-		cli->server_domain = talloc_move(cli, &state->out_primary_domain);
++	status = cli_state_update_after_sesssetup(state->cli,
++						  state->out_native_os,
++						  state->out_native_lm,
++						  state->out_primary_domain);
++	if (tevent_req_nterror(req, status)) {
++		return;
+ 	}
+ 
+ 	ok = smb1cli_conn_activate_signing(cli->conn,
+@@ -1707,7 +1737,6 @@ static void cli_session_setup_creds_done_lm21(struct tevent_req *subreq)
+ 		subreq, struct tevent_req);
+ 	struct cli_session_setup_creds_state *state = tevent_req_data(
+ 		req, struct cli_session_setup_creds_state);
+-	struct cli_state *cli = state->cli;
+ 	NTSTATUS status;
+ 
+ 	status = smb1cli_session_setup_lm21_recv(subreq, state,
+@@ -1720,11 +1749,12 @@ static void cli_session_setup_creds_done_lm21(struct tevent_req *subreq)
+ 		return;
+ 	}
+ 
+-	if (cli->server_os == NULL) {
+-		cli->server_os = talloc_move(cli, &state->out_native_os);
+-	}
+-	if (cli->server_type == NULL) {
+-		cli->server_type = talloc_move(cli, &state->out_native_lm);
++	status = cli_state_update_after_sesssetup(state->cli,
++						  state->out_native_os,
++						  state->out_native_lm,
++						  NULL);
++	if (tevent_req_nterror(req, status)) {
++		return;
+ 	}
+ 
+ 	tevent_req_done(req);
+-- 
+2.13.1
+

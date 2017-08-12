@@ -1,0 +1,37 @@
+From 69c97f1806f72a61f194acaaba7f2b919cb91227 Mon Sep 17 00:00:00 2001
+From: Andreas Schneider <asn@samba.org>
+Date: Thu, 5 Jan 2017 09:34:36 +0100
+Subject: [PATCH] replace: Include sysmacros.h
+
+In the GNU C Library, "makedev" is defined by <sys/sysmacros.h>. For
+historical compatibility, it is currently defined by <sys/types.h> as
+well, but it is planned to remove this soon.
+
+BUG: https://bugzilla.samba.org/show_bug.cgi?id=12686
+
+Signed-off-by: Andreas Schneider <asn@samba.org>
+Reviewed-by: Volker Lendecke <vl@samba.org>
+
+(cherry picked from commit 0127bdd33b251a52c6ffc44b6cb3b82b16a80741)
+---
+ lib/replace/replace.h | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/lib/replace/replace.h b/lib/replace/replace.h
+index c69a069e4b3..1dbeacfff66 100644
+--- a/lib/replace/replace.h
++++ b/lib/replace/replace.h
+@@ -171,6 +171,10 @@
+ #include <sys/types.h>
+ #endif
+ 
++#ifdef HAVE_SYS_SYSMACROS_H
++#include <sys/sysmacros.h>
++#endif
++
+ #ifdef HAVE_SETPROCTITLE_H
+ #include <setproctitle.h>
+ #endif
+-- 
+2.12.0
+
