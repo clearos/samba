@@ -1,0 +1,53 @@
+From fbef6bd05629e3f5939317bd073a2281fcc3b636 Mon Sep 17 00:00:00 2001
+From: Andreas Schneider <asn@samba.org>
+Date: Tue, 30 May 2017 16:30:33 +0200
+Subject: [PATCH] libcli:smb2: Gracefully handle not supported for
+ FSCTL_VALIDATE_NEGOTIATE_INFO
+
+If FSCTL_VALIDATE_NEGOTIATE_INFO is not implemented, e.g. in a SMB2 only
+server then gracefully handle NT_STATUS_NOT_SUPPORTED too.
+
+BUG: https://bugzilla.samba.org/show_bug.cgi?id=12808
+
+Signed-off-by: Andreas Schneider <asn@samba.org>
+Signed-off-by: Guenther Deschner <gd@samba.org>
+Pair-Programmed-With: Guenther Deschner <gd@samba.org>
+Reviewed-by: Jeremy Allison <jra@samba.org>
+
+Autobuild-User(master): Volker Lendecke <vl@samba.org>
+Autobuild-Date(master): Thu Jun 15 17:32:45 CEST 2017 on sn-devel-144
+
+(cherry picked from commit a4d9438ecf92614a0915b9cf61f905ea8170043a)
+---
+ libcli/smb/smbXcli_base.c | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/libcli/smb/smbXcli_base.c b/libcli/smb/smbXcli_base.c
+index a7b24f01497..593edf9ce78 100644
+--- a/libcli/smb/smbXcli_base.c
++++ b/libcli/smb/smbXcli_base.c
+@@ -5321,6 +5321,21 @@ static void smb2cli_validate_negotiate_info_done(struct tevent_req *subreq)
+ 		tevent_req_done(req);
+ 		return;
+ 	}
++	if (NT_STATUS_EQUAL(status, NT_STATUS_NOT_SUPPORTED)) {
++		/*
++		 * The response was signed, but not supported
++		 *
++		 * This might be returned by older Windows versions or by
++		 * NetApp SMB server implementations.
++		 *
++		 * See
++		 *
++		 * https://blogs.msdn.microsoft.com/openspecification/2012/06/28/smb3-secure-dialect-negotiation/
++		 *
++		 */
++		tevent_req_done(req);
++		return;
++	}
+ 	if (tevent_req_nterror(req, status)) {
+ 		return;
+ 	}
+-- 
+2.13.1.518.g3df882009-goog
+

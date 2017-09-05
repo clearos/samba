@@ -6,7 +6,7 @@
 # ctdb is enabled by default, you can disable it with: --without clustering
 %bcond_without clustering
 
-%define main_release 8
+%define main_release 10
 
 %define samba_version 4.6.2
 %define talloc_version 2.1.9
@@ -65,10 +65,7 @@
 %global with_dc 1
 %endif
 
-%global required_mit_krb5 1.10
-%if %{with_dc}
 %global required_mit_krb5 1.15.1
-%endif
 
 %global with_clustering_support 0
 
@@ -128,6 +125,9 @@ Patch12: samba-v4.7-config-dynamic-rpc-port-range.patch
 Patch13: samba-v4-6-fix_smbclient_session_setup_info.patch
 Patch14: samba-v4-6-fix_smbclient_username_parsing.patch
 Patch15: samba-v4-6-fix_winbind_normalize_names.patch
+Patch16: samba-v4-6-fix_net_ads_changetrustpw.patch
+Patch17: samba-v4.6-fix_smbpasswd_user_pwd_change.patch
+Patch18: samba-v4.6-graceful_fsctl_validate_negotiate_info.patch
 
 Requires(pre): /usr/sbin/groupadd
 Requires(post): systemd
@@ -291,6 +291,7 @@ Requires: %{name}-common = %{samba_depver}
 %if %with_libwbclient
 Requires: libwbclient = %{samba_depver}
 %endif
+Requires: krb5-libs >= %{required_mit_krb5}
 
 %description client-libs
 The samba-client-libs package contains internal libraries needed by the
@@ -430,7 +431,6 @@ the Kerberos credentials cache of the user issuing the print job.
 ### LIBS
 %package libs
 Summary: Samba libraries
-Requires: krb5-libs >= 1.14
 Requires: %{name}-client-libs = %{samba_depver}
 %if %with_libwbclient
 Requires: libwbclient = %{samba_depver}
@@ -2649,6 +2649,15 @@ rm -rf %{buildroot}
 %endif # with_clustering_support
 
 %changelog
+* Wed Aug 23 2017 Andreas Schneider <asn@redhat.com> - 4.6.2-10
+- resolves: #1484423 - Require at least krb5 version 1.15.1
+- resolves: #1484713 - Fix password changes for users via smbpasswd
+- resolves: #1484723 - Be more graceful on FSCTL_VALIDATE_NEGOTIATE_INFO
+                       returned errors
+
+* Mon Aug 14 2017 Andreas Schneider <asn@redhat.com> - 4.6.2-9
+- resolves: #1481188 - Fix 'net ads changetrustpw'
+
 * Thu Jun 22 2017 Andreas Schneider <asn@redhat.com> - 4.6.2-8
 - resolves: #1459936 - Fix regression with "follow symlinks = no"
 
