@@ -209,7 +209,7 @@ BuildRequires: libcephfs1-devel
 %endif
 
 %if %{with_dc}
-BuildRequires: gnutls-devel >= 3.4.7
+BuildRequires: gnutls-devel
 # Required by samba-tool to run tests
 BuildRequires: python-crypto
 %endif
@@ -1536,8 +1536,11 @@ rm -rf %{buildroot}
 %{_libdir}/samba/libdfs-server-ad-samba4.so
 %{_libdir}/samba/libdnsserver-common-samba4.so
 %{_libdir}/samba/libdsdb-module-samba4.so
-%{_libdir}/samba/libntvfs-samba4.so
 %{_libdir}/samba/bind9/dlz_bind9_9.so
+%{_libdir}/samba/bind9/dlz_bind9_11.so
+%{_libdir}/samba/ldb/dsdb_notification.so
+%{_libdir}/samba/ldb/vlv.so
+
 %else
 %doc packaging/README.dc-libs
 %endif # with_dc
