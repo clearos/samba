@@ -6,7 +6,7 @@
 # ctdb is enabled by default, you can disable it with: --without clustering
 %bcond_without clustering
 
-%define main_release 10
+%define main_release 11
 
 %define samba_version 4.6.2
 %define talloc_version 2.1.9
@@ -128,6 +128,9 @@ Patch15: samba-v4-6-fix_winbind_normalize_names.patch
 Patch16: samba-v4-6-fix_net_ads_changetrustpw.patch
 Patch17: samba-v4.6-fix_smbpasswd_user_pwd_change.patch
 Patch18: samba-v4.6-graceful_fsctl_validate_negotiate_info.patch
+Patch19: CVE-2017-12150.patch
+Patch20: CVE-2017-12151.patch
+Patch21: CVE-2017-12163.patch
 
 Requires(pre): /usr/sbin/groupadd
 Requires(post): systemd
@@ -2649,6 +2652,9 @@ rm -rf %{buildroot}
 %endif # with_clustering_support
 
 %changelog
+* Thu Sep 14 2017 Andreas Schneider <asn@redhat.com> - 4.6.2-11
+- resolves: #1491213 - CVE-2017-12150 CVE-2017-12151 CVE-2017-12163
+
 * Wed Aug 23 2017 Andreas Schneider <asn@redhat.com> - 4.6.2-10
 - resolves: #1484423 - Require at least krb5 version 1.15.1
 - resolves: #1484713 - Fix password changes for users via smbpasswd
