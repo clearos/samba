@@ -6,7 +6,7 @@
 # ctdb is enabled by default, you can disable it with: --without clustering
 %bcond_without clustering
 
-%define main_release 11
+%define main_release 12
 
 %define samba_version 4.6.2
 %define talloc_version 2.1.9
@@ -131,6 +131,8 @@ Patch18: samba-v4.6-graceful_fsctl_validate_negotiate_info.patch
 Patch19: CVE-2017-12150.patch
 Patch20: CVE-2017-12151.patch
 Patch21: CVE-2017-12163.patch
+Patch22: CVE-2017-14746.patch
+Patch23: CVE-2017-15275.patch
 Patch100:   samba-4.2.10-systemd-ldap.patch
 
 Requires(pre): /usr/sbin/groupadd
@@ -2661,9 +2663,12 @@ rm -rf %{buildroot}
 %endif # with_clustering_support
 
 %changelog
-* Thu Sep 28 2017 - ClearFoundation <developer@clearfoundation.com> - 4.6.2-11.clear
+* Tue Nov 28 2017 - ClearFoundation <developer@clearfoundation.com> - 4.6.2-12.clear
 - enable DC support for integration work
 - adjust systemd nmb.service for OpenLDAP deployments
+
+* Fri Nov 17 2017 Andreas Schneider <asn@redhat.com> - 4.6.2-12
+- resolves: #1514314 - Fix CVE-2017-14746 and CVE-2017-15275
 
 * Thu Sep 14 2017 Andreas Schneider <asn@redhat.com> - 4.6.2-11
 - resolves: #1491213 - CVE-2017-12150 CVE-2017-12151 CVE-2017-12163
